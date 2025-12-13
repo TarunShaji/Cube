@@ -55,4 +55,16 @@ class StorageService:
         refinements = self.db.get_collection("refinement_requests")
         await refinements.insert_one(request_data)
 
+    async def get_latest_meeting(self) -> MeetingState:
+        """
+        Retrieves the most recently modified meeting.
+        """
+        # Sort by natural insertion order or a timestamp if we had one indexed.
+        # Ideally we'd have a 'processed_at' field, but _id is decent proxy for now along with our manual dates.
+        # Actually, let's just sort by _id desc (natural creation order)
+        doc = await self.meetings.find_one({}, sort=[("_id", -1)])
+        if not doc:
+            return None
+        return MeetingState(**doc)
+
 db = StorageService()

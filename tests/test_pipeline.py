@@ -61,6 +61,12 @@ async def test_pipeline():
     if final_state.validation.errors:
         print(f"Errors: {final_state.validation.errors}")
 
+    # 4b. Persist to MongoDB (Contract D Prerequisite)
+    print("\n💾 SAVING TO MONGODB...")
+    from app.services.storage import db
+    await db.save_meeting(final_state)
+    print(f"Saved meeting {final_state.meeting_id} to DB.")
+
     # 5. Send to Slack (Test Contract C)
     print("\n--- 📢 SENDING TO SLACK ---")
     from app.services.slack import slack_service

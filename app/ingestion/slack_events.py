@@ -21,6 +21,7 @@ class SlackEvent(BaseModel):
     channel: Optional[str] = None
     ts: Optional[str] = None
     subtype: Optional[str] = None
+    bot_id: Optional[str] = None
 
 class SlackPayload(BaseModel):
     token: Optional[str] = None
@@ -87,35 +88,63 @@ def reply_to_slack(channel: str, user_id: str, text: str):
     except Exception as e:
         logger.error(f"❌ Failed to reply to Slack: {e}")
 
+from app.services.refinement import run_refinement
+from app.services.slack import slack_service
+
 async def process_refinement_event(event: SlackEvent):
     """
-    Background logic: Log, Store, Reply.
+    Background logic: Log, Infer Context, Refine, Store, Reply.
     """
     try:
-        # 1. Filter
-        if event.subtype == "bot_message":
+        # 1. Filter Bot Messages (Strict)
+        # If it has a subtype 'bot_message' OR has a 'bot_id', it's a bot.
+        if event.subtype == "bot_message" or event.bot_id:
+            logger.info(f"🚫 Ignoring bot message from user={event.user}, bot_id={event.bot_id}")
             return
             
-        logger.info(f"📨 Processing Slack Event: {event.type} from {event.user}")
+        logger.info(f"📨 Processing Refinement Request: '{event.text}' from {event.user}")
 
-        # 2. Store in MongoDB
+        # 2. Infer Context (Latest Meeting)
+        # In a real app, we might store 'last_meeting_id_for_channel' in Redis.
+        # For now, we take the global latest processed meeting.
+        meeting_state = await db.get_latest_meeting()
+        
+        if not meeting_state:
+            reply_to_slack(event.channel, event.user, "I couldn't find any recent meetings to update. 🤷")
+            return
+
+        # 3. Store Request (Audit Log)
         doc = {
             "slack_user_id": event.user,
             "channel_id": event.channel,
             "text": event.text,
             "timestamp": event.ts,
-            "related_meeting_id": None, # Future: inference logic
+            "related_meeting_id": meeting_state.meeting_id,
             "processed": False
         }
         await db.save_refinement_request(doc)
-        logger.info("💾 Refinement request saved to DB.")
 
-        # 3. Reply
-        reply_text = f"Got it <@{event.user}>. I’ve received your changes request and will update the draft shortly."
-        reply_to_slack(event.channel, event.user, reply_text)
+        # 4. Acknowledge Receipt
+        # reply_to_slack(event.channel, event.user, "On it! ✍️ Refining the draft...")
+
+        # 5. Run Refinement Agent
+        updated_state = await run_refinement(meeting_state, event.text)
+        
+        # 6. Save Updated State
+        await db.save_meeting(updated_state)
+        
+        # 7. Send Updated Output to Slack (Channel)
+        reply_to_slack(event.channel, event.user, f"✅ Updated draft for *{updated_state.metadata.title}* based on your feedback:")
+        
+        # Send the fancy block-kit message to the SAME channel
+        slack_service.send_notification(updated_state, channel_id=event.channel)
+        
+        # Mark request as processed in DB (optional update)
+        # ...
 
     except Exception as e:
         logger.error(f"❌ Error processing slack event: {e}")
+        reply_to_slack(event.channel, event.user, "Sorry, I encountered an error while updating the draft. 😔")
 
 @router.post("/slack/events")
 async def slack_events(request: Request, background_tasks: BackgroundTasks):

@@ -9,10 +9,11 @@ Cube is a trust-critical backend system that processes meeting transcripts to pr
 *   **Multi-Agent Pipeline**: 6 specialized LangGraph agents (using Gemini 1.5/2.0) for intent classification, topic segmentation, and commitment verification.
 *   **Persistent Deduplication**: Idempotent processing using MongoDB to ensure meetings are never processed twice.
 *   **Slack Integration**: Delivers executive summaries and draft emails directly to your team channel.
+*   **Interactive Refinement (Bot)**: Reply to the bot to refine drafts (e.g., "Add a task for Alice", "Rewrite email") without re-running the full pipeline.
 
 ## 🛠️ Architecture
 
-**Flow**: `Fireflies Webhook` → `MongoDB (Raw)` → `LangGraph Agents` → `MongoDB (Enriched)` → `Slack`
+**Flow**: `Fireflies` → `MongoDB` → `Pipeline` → `Slack` ↔️ `Refinement Agent`
 
 1.  **Ingestion (Contract A)**:
     *   Receives `Transcription completed` webhook from Fireflies.ai.
@@ -32,6 +33,12 @@ Cube is a trust-critical backend system that processes meeting transcripts to pr
     *   Formats intelligence into a structured Slack message (Block Kit).
     *   Includes Goals, Decisions, Evidence-backed Action Items, and the Draft Email.
 
+4.  **Refinement (Contract D)**:
+    *   Listens for Slack Events (`app_mention`, `message`).
+    *   Infers context from the latest processed meeting.
+    *   **Refinement Agent** applies user instructions (deltas) to the existing state.
+    *   Updates MongoDB and replies with the *updated* draft in the same channel.
+
 ## 📦 Tech Stack
 
 *   **Language**: Python 3.9+
@@ -39,7 +46,7 @@ Cube is a trust-critical backend system that processes meeting transcripts to pr
 *   **Orchestration**: LangGraph / LangChain
 *   **LLM**: Google Gemini (1.5 Flash / 2.0 Flash)
 *   **Database**: MongoDB (Motor AsyncIO)
-*   **Integrations**: Fireflies.ai (GraphQL), Slack (Webhooks)
+*   **Integrations**: Fireflies.ai (GraphQL), Slack (Webhooks & Events API)
 
 ## ⚙️ Setup
 
@@ -61,8 +68,13 @@ Cube is a trust-critical backend system that processes meeting transcripts to pr
     ```env
     FIREFLIES_API_KEY=...
     MONGODB_URI=...
-    SLACK_WEBHOOK_URL=...
     GEMINI_API_KEY=...
+    
+    # Slack Integration
+    SLACK_WEBHOOK_URL=...
+    SLACK_BOT_TOKEN=...
+    SLACK_SIGNING_SECRET=...
+    
     # Optional: LangSmith Tracing
     LANGCHAIN_TRACING_V2=true
     LANGCHAIN_API_KEY=...

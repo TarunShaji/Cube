@@ -41,4 +41,11 @@ class StorageService:
             upsert=True
         )
 
+    async def meeting_exists(self, meeting_id: str) -> bool:
+        """
+        Efficiently checks if a meeting exists in the DB (projection=only _id).
+        """
+        doc = await self.meetings.find_one({"meeting_id": meeting_id}, {"_id": 1})
+        return doc is not None
+
 db = StorageService()

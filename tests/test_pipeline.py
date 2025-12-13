@@ -61,5 +61,11 @@ async def test_pipeline():
     if final_state.validation.errors:
         print(f"Errors: {final_state.validation.errors}")
 
+    # 5. Send to Slack (Test Contract C)
+    print("\n--- 📢 SENDING TO SLACK ---")
+    from app.services.slack import slack_service
+    slack_service.send_notification(final_state)
+    print("Notification sent (check your channel).")
+
 if __name__ == "__main__":
     asyncio.run(test_pipeline())

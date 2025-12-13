@@ -42,9 +42,19 @@ async def process_meeting_task(meeting_id: str):
         await db.save_meeting(meeting_state)
         print(f"💾 Saved to MongoDB (id={meeting_id})")
         
-        # Trigger Intelligence Pipeline here (Contract B)
-        # from app.graph.workflow import run_pipeline
-        # await run_pipeline(meeting_state)
+        # Trigger Intelligence Pipeline (Contract B)
+        from app.graph.workflow import run_pipeline
+        print(f"🧠 Running Intelligence Pipeline...")
+        final_state = await run_pipeline(meeting_state)
+        
+        # Save Final State
+        await db.save_meeting(final_state)
+        print(f"💾 Updated MongoDB with Intelligence Results")
+
+        # Send to Slack (Contract C)
+        from app.services.slack import slack_service
+        slack_service.send_notification(final_state)
+        print(f"📢 Notification Sent to Slack")
         
         print(f"{'='*60}")
         print(f"✨ COMPLETED INGESTION FOR {meeting_id}")
@@ -68,8 +78,15 @@ async def fireflies_webhook(payload: FirefliesPayload, background_tasks: Backgro
     
     if payload.eventType in valid_events:
         if payload.meetingId in SEEN_MEETINGS:
-           logger.info(f"✋ Ignored duplicate webhook for {payload.meetingId}")
-           return {"status": "ignored_duplicate"}
+           logger.info(f"✋ Ignored duplicate webhook for {payload.meetingId} (Memory)")
+           return {"status": "ignored_duplicate_mem"}
+
+        # Persistent Check (MongoDB)
+        if await db.meeting_exists(payload.meetingId):
+            logger.info(f"✋ Ignored duplicate webhook for {payload.meetingId} (DB)")
+            # Add to memory so we don't hit DB again this run
+            SEEN_MEETINGS.add(payload.meetingId)
+            return {"status": "ignored_duplicate_db"}
 
         # Enqueue heavy lifting
         background_tasks.add_task(process_meeting_task, payload.meetingId)

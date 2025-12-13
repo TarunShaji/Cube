@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+python-dotenv
+langchain
+langgraph
+langchain-anthropic
+langchain-fireworks
+langchain-google-genai
+motor
+pydantic
+requests
+black
+isort
+pytest

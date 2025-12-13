@@ -1,0 +1,79 @@
+{
+    "meeting_id": "TEST_STATIC_001",
+    "metadata": {
+        "title": "Project Cube - Kickoff Meeting",
+        "date": "2025-12-14T10:00:00Z",
+        "participants": [
+            "tarun@example.com",
+            "alice@example.com",
+            "bob@example.com"
+        ]
+    },
+    "transcript": [
+        {
+            "speaker": "Tarun",
+            "text": "Alright, let's get started with the Project Cube kickoff.",
+            "timestamp": "00:00:10"
+        },
+        {
+            "speaker": "Alice",
+            "text": "Sounds good. I have the specs ready.",
+            "timestamp": "00:00:15"
+        },
+        {
+            "speaker": "Bob",
+            "text": "I'm here too. Just finished the database setup.",
+            "timestamp": "00:00:20"
+        },
+        {
+            "speaker": "Tarun",
+            "text": "Great. So the goal today is to agree on the API schema.",
+            "timestamp": "00:00:30"
+        },
+        {
+            "speaker": "Alice",
+            "text": "I propose we use GraphQL for everything.",
+            "timestamp": "00:00:45"
+        },
+        {
+            "speaker": "Bob",
+            "text": "I disagree. REST is simpler for the webhooks. Let's stick to REST for ingestion.",
+            "timestamp": "00:00:55"
+        },
+        {
+            "speaker": "Tarun",
+            "text": "Okay, that makes sense. Let's decide: REST for ingestion, GraphQL for the frontend.",
+            "timestamp": "00:01:10"
+        },
+        {
+            "speaker": "Alice",
+            "text": "Agreed.",
+            "timestamp": "00:01:15"
+        },
+        {
+            "speaker": "Tarun",
+            "text": "Alice, can you finalize the OpenAPI spec by Friday?",
+            "timestamp": "00:01:20"
+        },
+        {
+            "speaker": "Alice",
+            "text": "Yes, I will send the spec by Friday EOD.",
+            "timestamp": "00:01:25"
+        },
+        {
+            "speaker": "Tarun",
+            "text": "Bob, we need the dev environment up. Can you do that?",
+            "timestamp": "00:01:35"
+        },
+        {
+            "speaker": "Bob",
+            "text": "I'll try to get it done tomorrow.",
+            "timestamp": "00:01:40"
+        },
+        {
+            "speaker": "Tarun",
+            "text": "Perfect. I'll schedule the next sync for Monday.",
+            "timestamp": "00:01:50"
+        }
+    ]
+}

@@ -7,6 +7,8 @@ class Config:
     FIREFLIES_API_KEY = os.getenv("FIREFLIES_API_KEY")
     MONGODB_URI = os.getenv("MONGODB_URI")
     SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
+    SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
+    SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET")
     
     # LLM Keys
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")

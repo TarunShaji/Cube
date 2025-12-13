@@ -48,4 +48,11 @@ class StorageService:
         doc = await self.meetings.find_one({"meeting_id": meeting_id}, {"_id": 1})
         return doc is not None
 
+    async def save_refinement_request(self, request_data: dict):
+        """
+        Stores a user refinement request (from Slack).
+        """
+        refinements = self.db.get_collection("refinement_requests")
+        await refinements.insert_one(request_data)
+
 db = StorageService()

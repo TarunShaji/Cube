@@ -200,21 +200,42 @@ def agent_email_composition(state: MeetingState) -> Dict[str, Any]:
     Reads: commitments, intent_context
     Writes: email
     """
+    # Aggregate decisions from topics
+    all_decisions = []
+    for t in state.topics:
+        if t.decisions:
+            all_decisions.extend(t.decisions)
+
     prompt = f"""
-    Draft a professional follow-up email.
+    Draft a professional, executive-ready follow-up email based on the meeting data.
     
-    Context:
-    Type: {state.intent_context.meeting_type}
-    Goal: {state.intent_context.primary_goal}
+    CONTEXT:
+    - Type: {state.intent_context.meeting_type}
+    - Primary Goal: {state.intent_context.primary_goal}
     
-    Action Items:
+    DECISIONS REFERENCED (from topics):
+    {all_decisions}
+    
+    RAW COMMITMENTS (Evidence-backed):
     { [c.model_dump() for c in state.commitments] }
     
-    Rules:
-    - Neutral, professional tone.
-    - If no action items, say "No specific action items recorded."
-    - Structure: Summary, Decisions (from topics), Action Items.
-    - Do NOT invent new facts.
+    INSTRUCTIONS:
+    1. **Structure**: 
+       - Subject Line: Clear and specific to the meeting.
+       - **Body Content** (do NOT repeat the subject line here):
+         - **Executive Summary**: 2-3 sentences on context and outcomes.
+         - **Key Decisions**: Bullet points (ONLY if decisions exist).
+         - **Action Items**: Bullet points derived from 'RAW COMMITMENTS'.
+    
+    2. **Action Item Formatting**:
+       - Rewrite the 'task' description to be concise, direct, and professional (imperative mood).
+       - Format: "* **[Owner]**: [Refined Task Description] (Due: [Date])"
+       - Example: "* **Alice**: Finalize the API Specification (Due: Friday)"
+       - Do NOT change the meaning or owner.
+       - Do NOT invent new items.
+       - If no commitments exist, write: "No specific action items were identified."
+    
+    3. **Tone**: Neutral, efficient, professional.
     """
     
     response = llm.with_structured_output(EmailDraft).invoke([

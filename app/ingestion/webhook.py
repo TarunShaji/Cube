@@ -63,6 +63,11 @@ async def process_meeting_task(meeting_id: str):
             from app.services.slack import slack_service
             slack_service.send_notification(final_state)
             print(f"📢 Draft sent to Slack for human review")
+            
+            # CRITICAL: Activate this meeting for feedback loop
+            final_state.human_feedback.status = "active_review"
+            await db.save_meeting(final_state)
+            print(f"🔄 Activated for review (status='active_review')")
             print(f"ℹ️ Waiting for user feedback via /slack/events...")
         else:
             # Pipeline completed without human intervention (unlikely in Council arch)

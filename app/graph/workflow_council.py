@@ -1,6 +1,7 @@
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from typing import Literal
+from datetime import datetime, timezone
 from app.state import MeetingState
 from app.graph.nodes_council import (
     agent_strategist,
@@ -133,21 +134,25 @@ workflow.add_conditional_edges(
 workflow.add_edge("copywriter", "human_review")
 
 
-def route_after_human(state: MeetingState) -> Literal["refiner", "finalize"]:
+def route_after_human(state: MeetingState) -> str:
     """
-    Routes based on human feedback status.
-    
-    - If user requests revision → go to Refiner
-    - If user approves → finalize and end
+    Routes after human review checkpoint.
+    - If user provided feedback instructions → go to Refiner
+    - If user approves (status = "approved") → finalize and end
+    - Otherwise → stay paused (pending)
     """
     logger.info("🔀 ROUTING: Determining next step after Human Review...")
     
     feedback_status = state.human_feedback.status
-    logger.info(f"   Human feedback status: {feedback_status}")
+    has_instructions = state.human_feedback.instructions and len(state.human_feedback.instructions.strip()) > 0
     
-    # Check for revision request FIRST (this takes priority)
-    if feedback_status == "revision_requested":
-        logger.info("🔄 ROUTING: Human requested revision")
+    logger.info(f"   Human feedback status: {feedback_status}")
+    logger.info(f"   Has instructions: {has_instructions}")
+    
+    # Check if user provided feedback (status can be "pending" or "active_review")
+    # Both indicate the meeting is awaiting/receiving human input
+    if feedback_status in ("pending", "active_review") and has_instructions:
+        logger.info("🔄 ROUTING: User provided feedback")
         logger.info(f"   Instructions: {state.human_feedback.instructions[:100] if state.human_feedback.instructions else 'None'}...")
         logger.info("   Next step: Refiner (apply feedback)")
         return "refiner"
@@ -158,9 +163,9 @@ def route_after_human(state: MeetingState) -> Literal["refiner", "finalize"]:
         return "finalize"
     
     # Default: still pending (waiting for user input)
-    logger.info("⏳ ROUTING: Human review still pending")
-    logger.info("   Waiting for user input via Slack...")
-    return "finalize"  # Will stay at checkpoint until status changes
+    logger.info("⏸️ ROUTING: Still waiting for human feedback")
+    logger.info("   Next step: Stay at human_review (paused)")
+    return END
 
 
 workflow.add_conditional_edges(
@@ -256,46 +261,45 @@ async def run_council_pipeline(initial_state: MeetingState, thread_id: str = Non
     return final_state
 
 
-async def resume_council_pipeline(thread_id: str, user_feedback: str = None) -> MeetingState:
+async def resume_council_pipeline(thread_id: str, user_feedback: str, slack_user_id: str = None):
     """
-    Resumes a paused pipeline (from human_review checkpoint).
+    Resume a paused pipeline from the human_review checkpoint.
     
     Args:
-        thread_id: Thread ID of the paused workflow
-        user_feedback: User's revision instructions (if any)
-    
-    Returns:
-        Updated final state
+        thread_id: The meeting ID (used as thread_id in checkpointer)
+        user_feedback: The feedback text from Slack user
+        slack_user_id: Slack user ID who provided feedback
     """
-    logger.info("="*80)
-    logger.info("🔄 COUNCIL PIPELINE: RESUMING from checkpoint")
-    logger.info(f"   Thread ID: {thread_id}")
-    if user_feedback:
+    try:
+        logger.info("="*80)
+        logger.info("🔄 COUNCIL PIPELINE: RESUMING from checkpoint")
+        logger.info(f"   Thread ID: {thread_id}")
         logger.info(f"   User feedback: {user_feedback[:100]}...")
-    logger.info("="*80)
-    
-    config = {"configurable": {"thread_id": thread_id}}
-    
-    # Update state with feedback (if provided)
-    if user_feedback:
-        # Get current meeting state from MongoDB (has full MeetingState structure)
+        logger.info("="*80)
+        
+        # Load the current state from MongoDB
         from app.services.storage import db
         current_state = await db.get_meeting(thread_id)
         
         if not current_state:
             logger.error(f"❌ No meeting found for thread_id: {thread_id}")
-            return None
+            return None # Or raise an exception
         
         logger.info(f"📋 Loaded meeting state from MongoDB")
         logger.info(f"💬 User feedback: {user_feedback[:100]}...")
         
-        # Update the human_feedback in the current state
-        current_state.human_feedback.status = "revision_requested"
-        current_state.human_feedback.instructions = user_feedback
+        # Define config for checkpointer operations
+        config = {"configurable": {"thread_id": thread_id}}
         
-        logger.info(f"🔄 Updating checkpoint with user feedback via update_state()")
-        logger.info(f"   Status: revision_requested")
-        logger.info(f"   Instructions: {user_feedback[:50]}...")
+        # Update the human_feedback with user's instructions
+        # CRITICAL: Keep status as "pending" to allow multiple feedback rounds
+        # Status will only change to "approved" when user clicks approval button
+        current_state.human_feedback.instructions = user_feedback
+        current_state.human_feedback.timestamp = datetime.now(timezone.utc).isoformat()
+        current_state.human_feedback.slack_user_id = slack_user_id
+        
+        logger.info(f"   Status: pending (accepting feedback)")
+        logger.info(f"   Instructions: {user_feedback[:100]}...")
         
         # CRITICAL: Use aupdate_state() (async version) for async checkpointer
         # This preserves the interrupt point at human_review
@@ -325,13 +329,7 @@ async def resume_council_pipeline(thread_id: str, user_feedback: str = None) -> 
         logger.info("✅ COUNCIL PIPELINE: Resume completed")
         logger.info("="*80)
         return final_state
-    else:
-        # No feedback = approval
-        snapshot = app_graph.get_state(config)
-        final_state = MeetingState(**snapshot.values)
-        final_state.human_feedback.status = "approved"
-        
-        logger.info("="*80)
-        logger.info("✅ COUNCIL PIPELINE: User approved (no feedback)")
-        logger.info("="*80)
-        return final_state
+    
+    except Exception as e:
+        logger.error(f"❌ Error resuming pipeline: {e}")
+        raise

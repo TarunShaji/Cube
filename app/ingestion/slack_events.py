@@ -151,16 +151,19 @@ async def process_refinement_event(event: SlackEvent):
         logger.info(f"🔄 Resuming pipeline from checkpoint: {meeting_state.meeting_id}")
         updated_state = await resume_council_pipeline(
             thread_id=meeting_state.meeting_id,
-            user_feedback=event.text
+            user_feedback=event.text,
+            slack_user_id=event.user
         )
         
         if not updated_state:
             reply_to_slack(event.channel, event.user, "❌ Failed to resume pipeline. Please try again.")
             return
         
-        # 6. Save updated state to MongoDB
+        # 6. Save updated state to MongoDB with active_review status
+        # CRITICAL: Mark as active_review so follow-up feedback targets THIS meeting
+        updated_state.human_feedback.status = "active_review"
         await db.save_meeting(updated_state)
-        logger.info(f"💾 Saved updated state to MongoDB")
+        logger.info(f"💾 Saved updated state to MongoDB (status=active_review)")
         
         # 7. Send Updated Draft to Slack
         logger.info(f"📢 Sending updated draft to Slack")

@@ -61,7 +61,12 @@ async def test_with_slack():
     # 3. Save to MongoDB
     print("💾 Saving state to MongoDB...")
     await db.save_meeting(final_state)
-    print(f"✅ Saved with human_feedback.status = '{final_state.human_feedback.status}'\n")
+    print(f"✅ Saved with human_feedback.status = '{final_state.human_feedback.status}'")
+    
+    # CRITICAL: Activate this meeting for feedback loop
+    final_state.human_feedback.status = "active_review"
+    await db.save_meeting(final_state)
+    print(f"🔄 Activated for review (status = 'active_review')\n")
     
     # 4. Display what will be sent to Slack
     print("="*80)
@@ -73,8 +78,8 @@ async def test_with_slack():
     print(f"⚖️ Critic: Both approved = {final_state.critic.strategist_approved and final_state.critic.extractor_approved}")
     print(f"📧 Email Subject: {final_state.email.subject}\n")
     
-    # 5. Send to Slack
-    if final_state.human_feedback.status == "pending":
+    # 5. Send to Slack (if in active review mode)
+    if final_state.human_feedback.status == "active_review":
         print("="*80)
         print("📢 SENDING TO SLACK CHANNEL")
         print("="*80 + "\n")

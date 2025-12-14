@@ -65,7 +65,7 @@ class CriticVerification(BaseModel):
 
 class HumanFeedback(BaseModel):
     """Human-in-the-Loop Feedback"""
-    status: str = "pending"  # "pending" | "approved" | "revision_requested" | "processed"
+    status: str = "pending"  # "pending" | "active_review" | "approved"
     instructions: Optional[str] = None
     timestamp: Optional[str] = None
     slack_user_id: Optional[str] = None
@@ -89,6 +89,7 @@ class MeetingState(BaseModel):
     # Control Flow (New)
     human_feedback: HumanFeedback = Field(default_factory=HumanFeedback)
     retry_counts: Dict[str, int] = Field(default_factory=dict)  # {"strategist": 0, "extractor": 0}
+    last_modified: Optional[str] = None  # ISO timestamp for sorting pending meetings
     
     # Legacy Fields (Deprecated - for backward compatibility during migration)
     # TODO: Remove after full migration

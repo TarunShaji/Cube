@@ -45,13 +45,23 @@ class FirefliesClient:
             response.raise_for_status()
             data = response.json()
             
+            # Debug: Log what we got from Fireflies
+            logger.info(f"🔍 DEBUG: Fireflies API response keys: {list(data.keys())}")
+            
             if "errors" in data:
                 logger.error(f"Fireflies API Error: {data['errors']}")
                 raise ValueError(f"Fireflies API returned errors: {data['errors']}")
 
             t_data = data.get("data", {}).get("transcript")
-            if not t_data:
-                raise ValueError("Meeting not found or empty transcript")
+            
+            # Debug: Check what transcript data looks like
+            if t_data:
+                logger.info(f"✅ DEBUG: Got transcript data with keys: {list(t_data.keys())}")
+                logger.info(f"   Sentences count: {len(t_data.get('sentences', []))}")
+            else:
+                logger.error(f"❌ DEBUG: No transcript data found!")
+                logger.error(f"   Full response: {data}")
+                raise ValueError(f"Meeting {meeting_id} not found or transcript not ready yet")
 
             # Map to MeetingState
             # Note: Fireflies date is a specific format, we might need to normalize it. 
@@ -64,7 +74,11 @@ class FirefliesClient:
             )
 
             transcript_segments = []
-            for s in t_data.get("sentences", []):
+            sentences = t_data.get("sentences") or []  # Handle None when no speech in meeting
+            if not sentences:
+                logger.warning(f"⚠️ Meeting {meeting_id} has no sentences in transcript")
+            
+            for s in sentences:
                 segment = TranscriptSegment(
                     speaker=s.get("speaker_name") or "Unknown",
                     text=s.get("text") or "",

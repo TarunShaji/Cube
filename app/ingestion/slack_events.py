@@ -88,25 +88,23 @@ def reply_to_slack(channel: str, user_id: str, text: str):
     except Exception as e:
         logger.error(f"❌ Failed to reply to Slack: {e}")
 
-from app.services.refinement import run_refinement
 from app.services.slack import slack_service
 
 async def process_refinement_event(event: SlackEvent):
     """
-    Background logic: Log, Infer Context, Refine, Store, Reply.
+    Background logic: Resume Council Pipeline with Human Feedback.
+    
+    This is the "Human Review" node continuation in the Council architecture.
     """
     try:
         # 1. Filter Bot Messages (Strict)
-        # If it has a subtype 'bot_message' OR has a 'bot_id', it's a bot.
         if event.subtype == "bot_message" or event.bot_id:
             logger.info(f"🚫 Ignoring bot message from user={event.user}, bot_id={event.bot_id}")
             return
             
-        logger.info(f"📨 Processing Refinement Request: '{event.text}' from {event.user}")
+        logger.info(f"📨 Processing Human Feedback: '{event.text}' from {event.user}")
 
         # 2. Infer Context (Latest Meeting)
-        # In a real app, we might store 'last_meeting_id_for_channel' in Redis.
-        # For now, we take the global latest processed meeting.
         meeting_state = await db.get_latest_meeting()
         
         if not meeting_state:
@@ -124,23 +122,39 @@ async def process_refinement_event(event: SlackEvent):
         }
         await db.save_refinement_request(doc)
 
-        # 4. Acknowledge Receipt
-        # reply_to_slack(event.channel, event.user, "On it! ✍️ Refining the draft...")
-
-        # 5. Run Refinement Agent
-        updated_state = await run_refinement(meeting_state, event.text)
+        # 4. Determine Intent
+        # Simple heuristic: Check if user approved or requested changes
+        user_text_lower = event.text.lower()
+        
+        if any(word in user_text_lower for word in ["approve", "approved", "looks good", "perfect", "send it"]):
+            # User approved - finalize
+            logger.info("✅ User approved the draft")
+            meeting_state.human_feedback.status = "approved"
+            await db.save_meeting(meeting_state)
+            
+            reply_to_slack(event.channel, event.user, "✅ Draft approved! Finalizing...")
+            # In production, this would trigger email sending or final export
+            return
+        
+        # Otherwise, treat as revision request
+        logger.info("🔄 User requested revision")
+        
+        # 5. Resume Council Pipeline with Feedback
+        from app.graph.workflow_council import resume_council_pipeline
+        
+        updated_state = await resume_council_pipeline(
+            thread_id=meeting_state.meeting_id,
+            user_feedback=event.text
+        )
         
         # 6. Save Updated State
         await db.save_meeting(updated_state)
         
-        # 7. Send Updated Output to Slack (Channel)
+        # 7. Send Updated Output to Slack
         reply_to_slack(event.channel, event.user, f"✅ Updated draft for *{updated_state.metadata.title}* based on your feedback:")
         
-        # Send the fancy block-kit message to the SAME channel
+        # Send the updated draft
         slack_service.send_notification(updated_state, channel_id=event.channel)
-        
-        # Mark request as processed in DB (optional update)
-        # ...
 
     except Exception as e:
         logger.error(f"❌ Error processing slack event: {e}")

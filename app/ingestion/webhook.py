@@ -42,19 +42,30 @@ async def process_meeting_task(meeting_id: str):
         await db.save_meeting(meeting_state)
         print(f"💾 Saved to MongoDB (id={meeting_id})")
         
-        # Trigger Intelligence Pipeline (Contract B)
-        from app.graph.workflow import run_pipeline
-        print(f"🧠 Running Intelligence Pipeline...")
-        final_state = await run_pipeline(meeting_state)
+        # Trigger Intelligence Pipeline (Council Architecture)
+        from app.graph.workflow_council import run_council_pipeline
+        print(f"🧠 Running Council Intelligence Pipeline...")
         
-        # Save Final State
+        # Run pipeline - will pause at human_review
+        final_state = await run_council_pipeline(meeting_state, thread_id=meeting_id)
+        
+        # Save state at checkpoint (may be partial if paused)
         await db.save_meeting(final_state)
-        print(f"💾 Updated MongoDB with Intelligence Results")
+        print(f"💾 Updated MongoDB with Council Results")
 
-        # Send to Slack (Contract C)
-        from app.services.slack import slack_service
-        slack_service.send_notification(final_state)
-        print(f"📢 Notification Sent to Slack")
+        # Check if we hit the human review checkpoint
+        if final_state.human_feedback.status == "pending":
+            # Pipeline paused, send draft to Slack for review
+            print(f"⏸️ Pipeline paused at human review checkpoint")
+            from app.services.slack import slack_service
+            slack_service.send_notification(final_state)
+            print(f"📢 Draft sent to Slack for human review")
+            print(f"ℹ️ Waiting for user feedback via /slack/events...")
+        else:
+            # Pipeline completed without human intervention (unlikely in Council arch)
+            from app.services.slack import slack_service
+            slack_service.send_notification(final_state)
+            print(f"📢 Final notification sent to Slack")
         
         print(f"{'='*60}")
         print(f"✨ COMPLETED INGESTION FOR {meeting_id}")

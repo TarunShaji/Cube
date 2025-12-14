@@ -1,0 +1,317 @@
+from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.memory import MemorySaver
+from typing import Literal
+from app.state import MeetingState
+from app.graph.nodes_council import (
+    agent_strategist,
+    agent_extractor,
+    agent_critic,
+    agent_copywriter,
+    agent_refiner
+)
+import logging
+
+logger = logging.getLogger(__name__)
+
+# ============================================================
+# COUNCIL WORKFLOW (Non-Linear Architecture)
+# ============================================================
+
+MAX_RETRIES = 3  # Maximum debate loop iterations per agent
+
+# Define the graph
+workflow = StateGraph(MeetingState)
+
+# Add Nodes
+workflow.add_node("strategist", agent_strategist)
+workflow.add_node("extractor", agent_extractor)
+workflow.add_node("critic", agent_critic)
+workflow.add_node("copywriter", agent_copywriter)
+workflow.add_node("refiner", agent_refiner)
+workflow.add_node("human_review", lambda state: state)  # Passive wait node
+
+
+# ============================================================
+# ENTRY POINTS (Parallel Dispatch)
+# ============================================================
+
+workflow.set_entry_point("strategist")
+workflow.set_entry_point("extractor")
+
+
+# ============================================================
+# EDGES TO CRITIC
+# ============================================================
+
+# Both Strategist and Extractor feed into Critic
+workflow.add_edge("strategist", "critic")
+workflow.add_edge("extractor", "critic")
+
+
+# ============================================================
+# CONDITIONAL ROUTING FROM CRITIC (The Debate Loop)
+# ============================================================
+
+def route_after_critic(state: MeetingState) -> Literal["strategist", "extractor", "copywriter", "escalate"]:
+    """
+    The Double Debate Logic.
+    
+    Routes based on Critic's approval:
+    - If Strategist rejected → loop back to Strategist
+    - If Extractor rejected → loop back to Extractor
+    - If both approved → proceed to Copywriter
+    - If MAX_RETRIES exceeded → escalate to human
+    """
+    logger.info("🔀 ROUTING: Determining next step after Critic...")
+    
+    strategist_retries = state.retry_counts.get("strategist", 0)
+    extractor_retries = state.retry_counts.get("extractor", 0)
+    
+    logger.info(f"   Retry counts: Strategist={strategist_retries}, Extractor={extractor_retries}")
+    logger.info(f"   Strategist approved: {state.critic.strategist_approved}")
+    logger.info(f"   Extractor approved: {state.critic.extractor_approved}")
+    
+    # Check for retry exhaustion
+    if strategist_retries >= MAX_RETRIES:
+        logger.error(f"🚨 ROUTING: Strategist exceeded MAX_RETRIES ({MAX_RETRIES}). Escalating to human.")
+        logger.error(f"   Last feedback: {state.critic.strategist_feedback}")
+        return "escalate"
+    
+    if extractor_retries >= MAX_RETRIES:
+        logger.error(f"🚨 ROUTING: Extractor exceeded MAX_RETRIES ({MAX_RETRIES}). Escalating to human.")
+        logger.error(f"   Last feedback: {state.critic.extractor_feedback}")
+        return "escalate"
+    
+    # Check Critic decisions
+    strategist_ok = state.critic.strategist_approved
+    extractor_ok = state.critic.extractor_approved
+    
+    if not strategist_ok and not extractor_ok:
+        # Both rejected - prioritize Strategist (context must be right first)
+        logger.warning("⚠️ ROUTING: Critic rejected BOTH agents")
+        logger.warning("   Priority: Strategist (context must be correct first)")
+        logger.warning(f"   Strategist feedback: {state.critic.strategist_feedback}")
+        logger.warning(f"   Extractor feedback: {state.critic.extractor_feedback}")
+        return "strategist"
+    
+    if not strategist_ok:
+        logger.warning("⚠️ ROUTING: Strategist rejected, looping back")
+        logger.warning(f"   Feedback: {state.critic.strategist_feedback}")
+        logger.warning(f"   This is retry #{strategist_retries + 1} of {MAX_RETRIES}")
+        return "strategist"
+    
+    if not extractor_ok:
+        logger.warning("⚠️ ROUTING: Extractor rejected, looping back")
+        logger.warning(f"   Feedback: {state.critic.extractor_feedback}")
+        logger.warning(f"   This is retry #{extractor_retries + 1} of {MAX_RETRIES}")
+        return "extractor"
+    
+    # Both approved
+    logger.info("✅ ROUTING: Both agents approved by Critic")
+    logger.info("   Next step: Copywriter (drafting email)")
+    logger.info(f"   Total retries: Strategist={strategist_retries}, Extractor={extractor_retries}")
+    return "copywriter"
+
+
+workflow.add_conditional_edges(
+    "critic",
+    route_after_critic,
+    {
+        "strategist": "strategist",  # Loop back for retry
+        "extractor": "extractor",    # Loop back for retry
+        "copywriter": "copywriter",  # Proceed to drafting
+        "escalate": END              # Human intervention needed
+    }
+)
+
+
+# ============================================================
+# HUMAN-IN-THE-LOOP CHECKPOINT
+# ============================================================
+
+# Copywriter → Human Review (INTERRUPT POINT)
+workflow.add_edge("copywriter", "human_review")
+
+
+def route_after_human(state: MeetingState) -> Literal["refiner", "finalize"]:
+    """
+    Routes based on human feedback status.
+    
+    - If user requests revision → go to Refiner
+    - If user approves → finalize and end
+    """
+    logger.info("🔀 ROUTING: Determining next step after Human Review...")
+    
+    feedback_status = state.human_feedback.status
+    logger.info(f"   Human feedback status: {feedback_status}")
+    
+    if feedback_status == "revision_requested":
+        logger.info("🔄 ROUTING: Human requested revision")
+        logger.info(f"   Instructions: {state.human_feedback.instructions[:100]}...")
+        logger.info("   Next step: Refiner (apply feedback)")
+        return "refiner"
+    
+    if feedback_status == "approved":
+        logger.info("✅ ROUTING: Human approved the draft")
+        logger.info("   Next step: Finalize and END")
+        return "finalize"
+    
+    # Default: still pending (waiting for user input)
+    logger.info("⏳ ROUTING: Human review still pending")
+    logger.info("   Waiting for user input via Slack...")
+    return "finalize"  # Will stay at checkpoint until status changes
+
+
+workflow.add_conditional_edges(
+    "human_review",
+    route_after_human,
+    {
+        "refiner": "refiner",
+        "finalize": END
+    }
+)
+
+
+# ============================================================
+# REFINER LOOP
+# ============================================================
+
+# Refiner → back to Human Review (NOT Copywriter - to preserve changes)
+# User feedback is applied directly to the email, no need to regenerate
+workflow.add_edge("refiner", "human_review")
+
+
+# ============================================================
+# COMPILE WITH CHECKPOINTING
+# ============================================================
+
+# Use MemorySaver for development
+# In production, replace with PostgresSaver or RedisSaver
+checkpointer = MemorySaver()
+
+app_graph = workflow.compile(
+    checkpointer=checkpointer,
+    interrupt_before=["human_review"]  # Graph will pause here for user input
+)
+
+
+# ============================================================
+# EXECUTION FUNCTION
+# ============================================================
+
+async def run_council_pipeline(initial_state: MeetingState, thread_id: str = None) -> MeetingState:
+    """
+    Executes the Council intelligence pipeline.
+    
+    Args:
+        initial_state: Initial meeting state with transcript
+        thread_id: Unique thread ID for checkpointing (defaults to meeting_id)
+    
+    Returns:
+        Final enriched state (or partial state if interrupted)
+    """
+    if not thread_id:
+        thread_id = initial_state.meeting_id
+    
+    logger.info("="*80)
+    logger.info("🚀 COUNCIL PIPELINE: Starting execution")
+    logger.info(f"   Thread ID: {thread_id}")
+    logger.info(f"   Meeting: {initial_state.metadata.title}")
+    logger.info(f"   Transcript segments: {len(initial_state.transcript)}")
+    logger.info("="*80)
+    
+    config = {"configurable": {"thread_id": thread_id}}
+    
+    # Stream through the graph
+    final_state = initial_state  # Start with initial state
+    async for event in app_graph.astream(initial_state, config):
+        # event is a dict like {"strategist": {...}, "critic": {...}}
+        if event:
+            event_nodes = list(event.keys())
+            logger.info(f"📊 PIPELINE EVENT: {', '.join(event_nodes)}")
+            
+            # Update final_state with each event's state updates
+            for node_name, node_output in event.items():
+                if node_name != "__interrupt__":
+                    # Merge the node output into final state
+                    if isinstance(node_output, dict):
+                        for key, value in node_output.items():
+                            if hasattr(final_state, key):
+                                setattr(final_state, key, value)
+            
+            # Log checkpoint status
+            if "__interrupt__" in event_nodes:
+                logger.info("⏸️ CHECKPOINT: Pipeline paused at human_review")
+                logger.info(f"   State saved for thread: {thread_id}")
+    
+    logger.info("="*80)
+    if final_state.human_feedback.status == "pending":
+        logger.info("⏸️ COUNCIL PIPELINE: PAUSED at human review")
+        logger.info("   Waiting for user feedback to resume")
+    else:
+        logger.info("✅ COUNCIL PIPELINE: COMPLETED")
+    logger.info("="*80)
+    return final_state
+
+
+async def resume_council_pipeline(thread_id: str, user_feedback: str = None) -> MeetingState:
+    """
+    Resumes a paused pipeline (from human_review checkpoint).
+    
+    Args:
+        thread_id: Thread ID of the paused workflow
+        user_feedback: User's revision instructions (if any)
+    
+    Returns:
+        Updated final state
+    """
+    logger.info("="*80)
+    logger.info("🔄 COUNCIL PIPELINE: RESUMING from checkpoint")
+    logger.info(f"   Thread ID: {thread_id}")
+    if user_feedback:
+        logger.info(f"   User feedback: {user_feedback[:100]}...")
+    logger.info("="*80)
+    
+    config = {"configurable": {"thread_id": thread_id}}
+    
+    # Update state with feedback (if provided)
+    if user_feedback:
+        # Get current state from checkpoint
+        snapshot = app_graph.get_state(config)
+        current_state = MeetingState(**snapshot.values)
+        
+        # Update human feedback (Pydantic way)
+        current_state.human_feedback.status = "revision_requested"
+        current_state.human_feedback.instructions = user_feedback
+        
+        # Update the checkpoint with modified state
+        app_graph.update_state(config, current_state.model_dump())
+        
+        # Resume with updated state
+        final_state = current_state
+        async for event in app_graph.astream(None, config):
+            if event:
+                event_nodes = list(event.keys())
+                logger.info(f"📊 RESUME EVENT: {', '.join(event_nodes)}")
+                
+                # Update final_state with each event
+                for node_name, node_output in event.items():
+                    if node_name != "__interrupt__" and isinstance(node_output, dict):
+                        for key, value in node_output.items():
+                            if hasattr(final_state, key):
+                                setattr(final_state, key, value)
+        
+        logger.info("="*80)
+        logger.info("✅ COUNCIL PIPELINE: Resume completed")
+        logger.info("="*80)
+        return final_state
+    else:
+        # No feedback = approval
+        snapshot = app_graph.get_state(config)
+        final_state = MeetingState(**snapshot.values)
+        final_state.human_feedback.status = "approved"
+        
+        logger.info("="*80)
+        logger.info("✅ COUNCIL PIPELINE: User approved (no feedback)")
+        logger.info("="*80)
+        return final_state

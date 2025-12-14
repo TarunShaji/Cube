@@ -66,5 +66,19 @@ class StorageService:
         if not doc:
             return None
         return MeetingState(**doc)
+    
+    async def get_pending_meeting(self) -> MeetingState:
+        """
+        Retrieves the most recent meeting with human_feedback.status = "pending".
+        This is the meeting paused at the human review checkpoint.
+        """
+        doc = await self.meetings.find_one(
+            {"human_feedback.status": "pending"},
+            sort=[("_id", -1)]
+        )
+        if not doc:
+            return None
+        return MeetingState(**doc)
+
 
 db = StorageService()

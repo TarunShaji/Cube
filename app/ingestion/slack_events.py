@@ -104,12 +104,16 @@ async def process_refinement_event(event: SlackEvent):
             
         logger.info(f"📨 Processing Human Feedback: '{event.text}' from {event.user}")
 
-        # 2. Infer Context (Latest Meeting)
-        meeting_state = await db.get_latest_meeting()
+        # 2. Find the PAUSED Meeting (human_feedback.status = "pending")
+        # This ensures we resume the correct pipeline, not just any meeting
+        meeting_state = await db.get_pending_meeting()
         
         if not meeting_state:
-            reply_to_slack(event.channel, event.user, "I couldn't find any recent meetings to update. 🤷")
+            reply_to_slack(event.channel, event.user, "I couldn't find any meetings waiting for review. 🤷")
             return
+
+        logger.info(f"🔍 Found paused meeting: {meeting_state.meeting_id}")
+        logger.info(f"   Title: {meeting_state.metadata.title}")
 
         # 3. Store Request (Audit Log)
         doc = {
@@ -130,6 +134,7 @@ async def process_refinement_event(event: SlackEvent):
             # User approved - finalize
             logger.info("✅ User approved the draft")
             meeting_state.human_feedback.status = "approved"
+            meeting_state.human_feedback.slack_user_id = event.user
             await db.save_meeting(meeting_state)
             
             reply_to_slack(event.channel, event.user, "✅ Draft approved! Finalizing...")
@@ -140,21 +145,28 @@ async def process_refinement_event(event: SlackEvent):
         logger.info("🔄 User requested revision")
         
         # 5. Resume Council Pipeline with Feedback
+        # CRITICAL: Use meeting_id as thread_id to load the correct checkpoint
         from app.graph.workflow_council import resume_council_pipeline
         
+        logger.info(f"🔄 Resuming pipeline from checkpoint: {meeting_state.meeting_id}")
         updated_state = await resume_council_pipeline(
             thread_id=meeting_state.meeting_id,
             user_feedback=event.text
         )
         
-        # 6. Save Updated State
+        if not updated_state:
+            reply_to_slack(event.channel, event.user, "❌ Failed to resume pipeline. Please try again.")
+            return
+        
+        # 6. Save updated state to MongoDB
         await db.save_meeting(updated_state)
+        logger.info(f"💾 Saved updated state to MongoDB")
         
-        # 7. Send Updated Output to Slack
-        reply_to_slack(event.channel, event.user, f"✅ Updated draft for *{updated_state.metadata.title}* based on your feedback:")
-        
-        # Send the updated draft
+        # 7. Send Updated Draft to Slack
+        logger.info(f"📢 Sending updated draft to Slack")
         slack_service.send_notification(updated_state, channel_id=event.channel)
+        
+        reply_to_slack(event.channel, event.user, "✅ Updated draft based on your feedback! Check above ⬆️")
 
     except Exception as e:
         logger.error(f"❌ Error processing slack event: {e}")

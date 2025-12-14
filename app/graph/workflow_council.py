@@ -145,9 +145,10 @@ def route_after_human(state: MeetingState) -> Literal["refiner", "finalize"]:
     feedback_status = state.human_feedback.status
     logger.info(f"   Human feedback status: {feedback_status}")
     
+    # Check for revision request FIRST (this takes priority)
     if feedback_status == "revision_requested":
         logger.info("🔄 ROUTING: Human requested revision")
-        logger.info(f"   Instructions: {state.human_feedback.instructions[:100]}...")
+        logger.info(f"   Instructions: {state.human_feedback.instructions[:100] if state.human_feedback.instructions else 'None'}...")
         logger.info("   Next step: Refiner (apply feedback)")
         return "refiner"
     
@@ -185,9 +186,10 @@ workflow.add_edge("refiner", "human_review")
 # COMPILE WITH CHECKPOINTING
 # ============================================================
 
-# Use MemorySaver for development
-# In production, replace with PostgresSaver or RedisSaver
-checkpointer = MemorySaver()
+# Use persistent MongoDB checkpointer for cross-request resume
+# This allows the pipeline to survive between web requests (e.g. Slack events)
+from app.graph.checkpoint_saver import MongoDBCheckpointSaver
+checkpointer = MongoDBCheckpointSaver()
 
 app_graph = workflow.compile(
     checkpointer=checkpointer,
@@ -276,20 +278,33 @@ async def resume_council_pipeline(thread_id: str, user_feedback: str = None) -> 
     
     # Update state with feedback (if provided)
     if user_feedback:
-        # Get current state from checkpoint
-        snapshot = app_graph.get_state(config)
-        current_state = MeetingState(**snapshot.values)
+        # Get current meeting state from MongoDB (has full MeetingState structure)
+        from app.services.storage import db
+        current_state = await db.get_meeting(thread_id)
         
-        # Update human feedback (Pydantic way)
-        current_state.human_feedback.status = "revision_requested"
-        current_state.human_feedback.instructions = user_feedback
+        if not current_state:
+            logger.error(f"❌ No meeting found for thread_id: {thread_id}")
+            return None
         
-        # Update the checkpoint with modified state
-        app_graph.update_state(config, current_state.model_dump())
+        logger.info(f"📋 Loaded meeting state from MongoDB")
+        logger.info(f"💬 User feedback: {user_feedback[:100]}...")
+        logger.info(f"🔄 Injecting feedback and resuming from checkpoint")
         
-        # Resume with updated state
+        # Inject user feedback as input to the graph
+        # This preserves the interrupt checkpoint and allows proper resume
+        feedback_update = {
+            "human_feedback": {
+                "status": "revision_requested",
+                "instructions": user_feedback,
+                "timestamp": current_state.human_feedback.timestamp,
+                "slack_user_id": current_state.human_feedback.slack_user_id
+            }
+        }
+        
+        # Resume from checkpoint with feedback injected as input
+        # This will trigger route_after_human() which routes to refiner
         final_state = current_state
-        async for event in app_graph.astream(None, config):
+        async for event in app_graph.astream(feedback_update, config):
             if event:
                 event_nodes = list(event.keys())
                 logger.info(f"📊 RESUME EVENT: {', '.join(event_nodes)}")

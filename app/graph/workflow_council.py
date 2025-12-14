@@ -288,23 +288,28 @@ async def resume_council_pipeline(thread_id: str, user_feedback: str = None) -> 
         
         logger.info(f"📋 Loaded meeting state from MongoDB")
         logger.info(f"💬 User feedback: {user_feedback[:100]}...")
-        logger.info(f"🔄 Injecting feedback and resuming from checkpoint")
         
-        # Inject user feedback as input to the graph
-        # This preserves the interrupt checkpoint and allows proper resume
-        feedback_update = {
-            "human_feedback": {
-                "status": "revision_requested",
-                "instructions": user_feedback,
-                "timestamp": current_state.human_feedback.timestamp,
-                "slack_user_id": current_state.human_feedback.slack_user_id
-            }
-        }
+        # Update the human_feedback in the current state
+        current_state.human_feedback.status = "revision_requested"
+        current_state.human_feedback.instructions = user_feedback
         
-        # Resume from checkpoint with feedback injected as input
+        logger.info(f"🔄 Updating checkpoint with user feedback via update_state()")
+        logger.info(f"   Status: revision_requested")
+        logger.info(f"   Instructions: {user_feedback[:50]}...")
+        
+        # CRITICAL: Use aupdate_state() (async version) for async checkpointer
+        # This preserves the interrupt point at human_review
+        await app_graph.aupdate_state(
+            config,
+            {"human_feedback": current_state.human_feedback.model_dump()}
+        )
+        
+        logger.info(f"✅ Checkpoint updated, now resuming from human_review...")
+        
+        # Resume from checkpoint with None as input (means "continue from interrupt")
         # This will trigger route_after_human() which routes to refiner
         final_state = current_state
-        async for event in app_graph.astream(feedback_update, config):
+        async for event in app_graph.astream(None, config):
             if event:
                 event_nodes = list(event.keys())
                 logger.info(f"📊 RESUME EVENT: {', '.join(event_nodes)}")

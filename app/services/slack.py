@@ -87,6 +87,35 @@ class SlackService:
 
         blocks.append({"type": "divider"})
         
+        # Build Gmail Compose URL with pre-filled draft
+        import urllib.parse
+        gmail_subject = urllib.parse.quote(state.email.subject or "Follow-up", safe="")
+        gmail_body = urllib.parse.quote(state.email.body or "", safe="")
+        gmail_url = f"https://mail.google.com/mail/?view=cm&fs=1&su={gmail_subject}&body={gmail_body}"
+        
+        # Add Approve button that opens Gmail
+        blocks.append({
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "✅ Approve & Open Gmail", "emoji": True},
+                    "style": "primary",
+                    "action_id": "approve_and_send",
+                    "value": state.meeting_id,  # Pass meeting_id for approval
+                    "url": gmail_url  # Opens Gmail in browser
+                }
+            ]
+        })
+        
+        # Footer hint
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": "💡 _Reply to refine, or click Approve to open Gmail with draft_"}
+            ]
+        })
+        
         # SENDING LOGIC
         try:
             # 1. Prefer Dynamic Channel (Bot Token)

@@ -30,6 +30,9 @@ async def process_meeting_task(meeting_id: str):
     print(f"🚀 STARTING INGESTION FOR MEETING: {meeting_id}")
     print(f"{'='*60}")
     
+    # Auto-approve any abandoned active_review meetings before processing new one
+    await db.auto_approve_active_reviews()
+    
     try:
         logger.info(f"📥 Fetching transcript from Fireflies...")
         meeting_state = fireflies_client.get_transcript(meeting_id)

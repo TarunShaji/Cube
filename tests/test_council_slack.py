@@ -29,6 +29,11 @@ async def test_with_slack():
     print("🏛️ COUNCIL PIPELINE - END-TO-END TEST WITH SLACK")
     print("="*80 + "\n")
     
+    # Auto-approve any abandoned active_review meetings from previous runs
+    approved_count = await db.auto_approve_active_reviews()
+    if approved_count > 0:
+        print(f"🔄 Auto-approved {approved_count} abandoned meeting(s) from previous session\n")
+    
     # 1. Load static transcript
     print("📂 Loading static transcript...")
     with open("tests/static_transcript.json", "r") as f:

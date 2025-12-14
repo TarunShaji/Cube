@@ -137,6 +137,25 @@ class StorageService:
         logger.info(f"   status: pending (will be activated on first feedback)")
         
         return MeetingState(**doc)
+    
+    async def auto_approve_active_reviews(self) -> int:
+        """
+        Auto-approves any meetings with status='active_review'.
+        Called when a new meeting arrives to clean up abandoned sessions.
+        Returns count of meetings approved.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        result = await self.meetings.update_many(
+            {"human_feedback.status": "active_review"},
+            {"$set": {"human_feedback.status": "approved"}}
+        )
+        
+        if result.modified_count > 0:
+            logger.info(f"🔄 Auto-approved {result.modified_count} abandoned meeting(s)")
+        
+        return result.modified_count
 
 
 db = StorageService()

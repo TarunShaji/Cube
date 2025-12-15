@@ -34,9 +34,9 @@ async def test_with_slack():
     if approved_count > 0:
         print(f"🔄 Auto-approved {approved_count} abandoned meeting(s) from previous session\n")
     
-    # 1. Load Blackbrook transcript
-    print("📂 Loading Blackbrook Case & Team Cube Ads transcript...")
-    with open("tests/Blackbrook-Case-and-Team-Cube-Ads-2bc1edcb-2eeb.json", "r") as f:
+    # 1. Load Sahana CubeHQ transcript
+    print("📂 Loading Sahana CubeHQ AI meeting transcript...")
+    with open("tests/sahana-cubehq-ai-Wed-03-Dec-2025-18-32-52-UTC-Untitled-d2b09e65-c470.json", "r") as f:
         raw_transcript = json.load(f)
     
     # Extract unique speakers from transcript
@@ -44,10 +44,10 @@ async def test_with_slack():
     
     # Build MeetingState from raw transcript format
     initial_state = MeetingState(
-        meeting_id="BLACKBROOK_ADS_001",
+        meeting_id="SAHANA_CUBEHQ_001",
         metadata=MeetingMetadata(
-            title="Blackbrook Case and Team Cube Ads",
-            date="2024-12-14",
+            title="CubeHQ AI - Website Review Discussion",
+            date="2025-12-03",
             participants=speakers
         ),
         transcript=[

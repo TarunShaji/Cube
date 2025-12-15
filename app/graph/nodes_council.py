@@ -287,7 +287,9 @@ Be strict but fair. If uncertain, REJECT and ask for retry.
 async def agent_copywriter(state: MeetingState) -> Dict[str, Any]:
     """
     Only runs when Critic approves both Strategist and Extractor.
-    Uses verified data to draft the follow-up email.
+    Generates TWO outputs:
+    1. Client-facing email (professional, no internal names)
+    2. Internal action plan (detailed, grouped by owner)
     
     Reads: strategist, extractor
     Writes: email
@@ -309,49 +311,158 @@ async def agent_copywriter(state: MeetingState) -> Dict[str, Any]:
     logger.info(f"     • Action items: {len(state.extractor.commitments)}")
     logger.info(f"     • Decisions: {len(state.extractor.decisions)}")
     
+    # Group commitments by owner for the internal section
+    commitments_by_owner = {}
+    for c in state.extractor.commitments:
+        owner = c.owner if c.owner and c.owner != "TBD" else "Unassigned"
+        if owner not in commitments_by_owner:
+            commitments_by_owner[owner] = []
+        commitments_by_owner[owner].append({"task": c.task, "due": c.due})
+    
     prompt = f"""
-You are drafting a professional follow-up email based on VERIFIED meeting analysis.
+You are drafting a professional meeting follow-up with TWO SEPARATE OUTPUTS.
 
-**CONTEXT & TONE** (from Strategist):
+**CONTEXT** (from Strategist):
 - Meeting Type: {state.strategist.meeting_type}
 - Required Tone: {state.strategist.tone}
 - Sentiment: {state.strategist.sentiment}
+- Meeting Title: {state.metadata.title}
+- Date: {state.metadata.date}
+- Participants: {', '.join(state.metadata.participants)}
 
-**CONTENT** (from Extractor - VERIFIED):
+**RAW DATA** (from Extractor):
 - Decisions Made: {state.extractor.decisions}
 - Metrics Discussed: {state.extractor.metrics}
-- Action Items: {len(state.extractor.commitments)} commitments
+- All Commitments by Owner: {commitments_by_owner}
 
-**ACTION ITEMS DETAIL**:
-{[{"owner": c.owner, "task": c.task, "due": c.due} for c in state.extractor.commitments]}
+=============================================================
+SAMPLE CLIENT EMAILS (MATCH THIS STYLE)
+=============================================================
 
-**INSTRUCTIONS**:
-1. **Subject Line**: Specific and clear (e.g., "Follow-up: Q4 Planning - Action Items")
-2. **Email Body**:
-   - Opening: Brief context (1-2 sentences) matching the tone
-   - Key Decisions: Bullet list (if decisions exist)
-   - Metrics Summary: If numbers were discussed
-   - Action Items: Formatted as "* **[Owner]**: [Task] (Due: [Date])"
-   - Closing: Professional sign-off
+**Example 1:**
+Hi Team,
+Following up from today's call - here are the latest updates:
+Blog Page - Blog page is now live: https://example.com/blog
+Product Page - We'll rework the page as per the PDF shared and send the updated version by Tuesday
+Please review and share feedback or approvals where applicable.
+Thanks!
 
-3. **Tone Matching**:
-   - If tone is "Urgent": Use concise, action-oriented language
-   - If tone is "Celebratory": Acknowledge successes
-   - If tone is "Critical": Be clear about issues without being alarmist
-   - If tone is "Professional": Keep it neutral and business-like
+**Example 2:**
+Hi Wendy, Tina and Gadi,
+Thank you for your time on today's call. Sharing the latest updates for your review and approval:
+Title & Meta: View
+Blog Page Preview Links:
+Collection: View
+Individual: View
+Please let us know which variation you'd like to proceed with so we can begin development.
+Thanks,
+Jatin
 
-4. **DO NOT**:
-   - Add tasks not in the extractor data
-   - Change owners or due dates
-   - Hallucinate decisions
+**Example 3:**
+Hi T and John,
+Hope you're both doing well. Sharing the following for your review:
+SEO report - View
+Call recording - View
+Blog drafts for your review and approval:
+- Korean Food Catering NYC: Full-Service Event Catering
+- Authentic Korean Restaurant in Manhattan
+Thank you for granting access to the Ads account.
+Best,
 
-Write the complete email.
+**Example 4:**
+Hi Nancy, Peggy, and Jeff,
+Thank you for your time on the call today. As discussed, I'm sharing the implementation plan we went over - Click here.
+We'll begin working on the schema markup, title and header descriptions, and the blog page.
+Please let us know if you have any questions.
+Looking forward to our call next week!
+Best,
+Sahana
+
+=============================================================
+OUTPUT 1: CLIENT-FACING EMAIL
+=============================================================
+
+**Audience**: The external client/stakeholder
+**Style**: SHORT, CONCISE, BULLETED - like the examples above
+
+**FORMAT RULES**:
+1. Short greeting with client name(s) if known
+2. Brief thank you for the call (1 line max)
+3. Bullet list of updates/items with clear labels
+4. Action items the CLIENT needs to do
+5. Short closing (Thanks! / Best, / Looking forward)
+
+**CRITICAL CONSTRAINTS - DO NOT**:
+- ❌ Mention internal employee names (Nithin, Sahana, Karthik, etc.)
+- ❌ List internal technical tasks (backend changes, hide buttons, etc.)
+- ❌ Use "TBD" in the client email
+- ❌ Write long paragraphs - use bullets!
+- ❌ Be overly formal - keep it friendly and direct
+
+=============================================================
+OUTPUT 2: INTERNAL ACTION PLAN
+=============================================================
+
+**Audience**: Internal team (PMs, developers, designers)
+**Tone**: Tactical, direct, detailed
+
+**WHAT TO INCLUDE**:
+1. Key Decisions section (bullet list)
+2. Tasks grouped by Owner name
+3. Technical details and specific instructions
+4. Client tasks to track (what we're waiting on)
+5. Unassigned/TBD items that need owners
+
+=============================================================
+REQUIRED OUTPUT FORMAT (MUST INCLUDE BOTH SECTIONS!)
+=============================================================
+
+**Subject line**: Put in the 'subject' field
+
+**Body**: Must contain BOTH sections separated by the divider:
+
+Hi [Client Name(s)],
+
+Thank you for your time on today's call. Here are the latest updates:
+
+[BULLET LIST OF UPDATES/ITEMS]
+
+[CLIENT ACTION ITEMS IF ANY]
+
+[SHORT CLOSING]
+
+---
+=== INTERNAL USE ONLY ===
+---
+
+### Key Decisions
+* [Decision 1]
+* [Decision 2]
+
+### Tasks by Owner
+
+**Nithin Reddy**
+* [Task] (Due: [Date])
+
+**Sahana K**
+* [Task] (Due: [Date])
+
+**Karthik B**
+* [Task] (Due: [Date])
+
+**Client Action Items (to track)**
+* [What we're waiting on from client]
+
+**Unassigned / Needs Owner**
+* [Task without owner]
+
+IMPORTANT: You MUST include BOTH the client email AND the internal action plan!
 """
 
     try:
         logger.info("   Invoking LLM for email composition...")
         response = await llm.with_structured_output(EmailDraft).ainvoke([
-            SystemMessage(content="You are a professional executive assistant drafting follow-up emails."),
+            SystemMessage(content="You are a professional executive assistant. Generate both a client-facing email AND an internal action plan. Keep them clearly separated."),
             HumanMessage(content=prompt)
         ])
         

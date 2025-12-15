@@ -116,39 +116,82 @@ async def agent_extractor(state: MeetingState) -> Dict[str, Any]:
     logger.info(f"   Formatted transcript length: {len(transcript_text)} chars")
     
     prompt = f"""
-You are a data extractor. Extract ONLY factual, structured information from this transcript:
+You are a PRECISE data extractor. Extract structured action items from this transcript.
 
-**Extract**:
-1. **Action Items** (commitments):
-   - Task description
-   - Owner (person name or "TBD")
-   - Due date (YYYY-MM-DD or "TBD")
-   - Evidence: FULL verbatim quote from transcript
-   
-   Look for phrases like "I will...", "I'll...", "[Name] will...", "Let's..."
+**TEAM ROLES** (use for intelligent assignment):
+- **Sahana K** = Designer (Figma, images, visual elements, UI/UX)
+- **Nithin Reddy** = Developer (code, backend, functionality, uploads, deployment)
+- **Karthik B** = Project Manager (coordination, client communication)
 
-2. **Quantitative Metrics** (numbers mentioned):
-   - Budget amounts
-   - Headcount/team size
-   - Revenue/sales targets
-   - Deadlines
-   - Performance metrics
-   Format as dictionary: {{"budget": 10000, "deadline": "2024-01-15"}}
+=============================================================
+CRITICAL EXTRACTION RULES - FOLLOW EXACTLY
+=============================================================
 
-3. **Explicit Decisions Made**:
-   - Choices that were agreed upon
-   List as strings
+**1. KILL THE PRONOUNS (Context Resolution):**
+❌ NEVER output vague instructions like "Delete this," "Fix that," or "Remove something"
+✅ ALWAYS look at the 2-3 sentences BEFORE the action in the transcript to find the specific noun
 
-**RULES**:
-- DO NOT interpret tone or sentiment (that's the Strategist's job)
-- Only extract what is EXPLICITLY stated
-- For commitments, include FULL sentence as evidence
-- If no metrics/decisions, return empty lists/dicts
+Examples:
+❌ BAD: "Delete something to avoid confusion"
+✅ GOOD: "Delete the duplicate arrow icon on the homepage"
 
-Transcript:
+❌ BAD: "Change this to match"
+✅ GOOD: "Change the footer background color to match the header (#2B4A6F)"
+
+❌ BAD: "Hide them from the back end"
+✅ GOOD: "Hide the 'Benefits' and 'Case Study' pages from the navigation menu"
+
+**2. QUALIFY COMMUNICATION TASKS:**
+❌ NEVER just say "Write to [Name]" or "Email [Name]"
+✅ ALWAYS specify WHAT the email/message is about
+
+Examples:
+❌ BAD: "Write to Alex"
+✅ GOOD: "Email Alex to request the shipping address for the product bottles"
+
+❌ BAD: "Contact client"
+✅ GOOD: "Contact client to get GSC access credentials for seo@cubehq.ai"
+
+**3. INTELLIGENT ROLE ASSIGNMENT:**
+If someone says "[Name] do X" but the task doesn't match their role, assign correctly:
+
+- Visual/Design/Figma/Images → Sahana K (Designer)
+- Code/Backend/Functionality/Shopify → Nithin Reddy (Developer)  
+- Coordination/Follow-up/PM tasks → Karthik B (PM)
+
+Example: If transcript says "Nithin change the image" but it's a design task:
+→ Assign to Sahana K with task: "Update product image on homepage"
+→ OR assign to Nithin if it's just uploading: "Upload updated product image to Shopify"
+
+**4. DECISIONS vs ACTION ITEMS - NO OVERLAP:**
+- **Decisions** = High-level strategic choices (e.g., "Launch Phase 1 before Christmas")
+- **Action Items** = Granular executable tasks (e.g., "Hide buttons on page X")
+- DO NOT repeat the same item in both lists!
+
+=============================================================
+WHAT TO EXTRACT
+=============================================================
+
+**1. Action Items (commitments):**
+- Task: SPECIFIC description (use context resolution!)
+- Owner: Assign based on task type (Designer/Developer/PM/Client/TBD)
+- Due: YYYY-MM-DD or relative (e.g., "Friday", "Next week", "TBD")
+- Evidence: The FULL sentence from transcript
+
+**2. Quantitative Metrics:**
+- Budget amounts, deadlines, targets, counts
+- Format as dictionary: {{"budget": 10000, "deadline": "2024-01-15"}}
+
+**3. Key Decisions Made:**
+- HIGH-LEVEL choices only (strategy, priorities, direction)
+- NOT granular tasks
+
+=============================================================
+TRANSCRIPT
+=============================================================
 {transcript_text[:50000]}
 
-Return structured data.
+Extract with MAXIMUM specificity. No vague pronouns. No ambiguous tasks.
 """
 
     try:

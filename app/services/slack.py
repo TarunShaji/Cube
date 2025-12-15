@@ -74,16 +74,50 @@ class SlackService:
                 "text": {"type": "mrkdwn", "text": "*Action Items:*\n_No explicit commitments found._"}
             })
 
-        # Email Draft
+        # Email Draft - split into multiple blocks if too long (Slack limit: 3000 chars per section)
         if state.email.body:
              blocks.append({"type": "divider"})
-             blocks.append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn", 
-                    "text": f"*Draft Email (Subject: {state.email.subject or 'No Subject'})*\n```{state.email.body}```"
-                }
-            })
+             
+             # Slack section text limit is 3000 chars, use 2900 to be safe
+             MAX_SECTION_CHARS = 2900
+             full_text = f"*Draft Email (Subject: {state.email.subject or 'No Subject'})*\n```{state.email.body}```"
+             
+             if len(full_text) <= MAX_SECTION_CHARS:
+                 blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": full_text}
+                 })
+             else:
+                 # Split into multiple sections
+                 # First section with subject header
+                 header_text = f"*Draft Email (Subject: {state.email.subject or 'No Subject'})*\n```"
+                 remaining_chars = MAX_SECTION_CHARS - len(header_text) - 3  # -3 for closing ```
+                 
+                 body_text = state.email.body
+                 first_chunk = body_text[:remaining_chars]
+                 blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"{header_text}{first_chunk}...```"}
+                 })
+                 
+                 # Remaining chunks
+                 body_text = body_text[remaining_chars:]
+                 chunk_num = 2
+                 while body_text:
+                     chunk = body_text[:MAX_SECTION_CHARS - 10]  # Leave room for ``` markers
+                     body_text = body_text[MAX_SECTION_CHARS - 10:]
+                     
+                     if body_text:  # More chunks coming
+                         blocks.append({
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": f"```...{chunk}...```"}
+                         })
+                     else:  # Last chunk
+                         blocks.append({
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": f"```...{chunk}```"}
+                         })
+                     chunk_num += 1
 
         blocks.append({"type": "divider"})
         

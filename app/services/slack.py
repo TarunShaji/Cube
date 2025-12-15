@@ -90,7 +90,16 @@ class SlackService:
         # Build Gmail Compose URL with pre-filled draft
         import urllib.parse
         gmail_subject = urllib.parse.quote(state.email.subject or "Follow-up", safe="")
-        gmail_body = urllib.parse.quote(state.email.body or "", safe="")
+        
+        # Truncate body for Gmail URL (Slack button URL limit is 3000 chars)
+        # Reserve ~200 chars for URL structure and subject
+        MAX_BODY_CHARS = 800  # URL-encoded this becomes ~2400 chars
+        email_body = state.email.body or ""
+        if len(email_body) > MAX_BODY_CHARS:
+            truncated_body = email_body[:MAX_BODY_CHARS] + "\n\n[... Email truncated. See full draft in Slack message above.]"
+        else:
+            truncated_body = email_body
+        gmail_body = urllib.parse.quote(truncated_body, safe="")
         gmail_url = f"https://mail.google.com/mail/?view=cm&fs=1&su={gmail_subject}&body={gmail_body}"
         
         # Add Approve button that opens Gmail
@@ -142,7 +151,42 @@ class SlackService:
             # 2. Fallback to Webhook
             if self.webhook_url:
                 payload = {"blocks": blocks}
+                
+                # Detailed debug logging
+                import json as json_module
+                payload_str = json_module.dumps(payload, indent=2)
+                payload_size = len(payload_str)
+                
+                logger.info(f"📤 Sending to Slack Webhook...")
+                logger.info(f"   Payload size: {payload_size} chars")
+                logger.info(f"   Number of blocks: {len(blocks)}")
+                
+                # Log each block type and size
+                for i, block in enumerate(blocks):
+                    block_str = json_module.dumps(block)
+                    block_type = block.get("type", "unknown")
+                    logger.info(f"   Block {i}: type={block_type}, size={len(block_str)} chars")
+                    
+                    # If it's an actions block, log the button URL length
+                    if block_type == "actions":
+                        for element in block.get("elements", []):
+                            if element.get("url"):
+                                logger.info(f"      Button URL length: {len(element['url'])} chars")
+                
+                # Log the full payload for debugging
+                logger.debug(f"   Full payload:\n{payload_str[:2000]}...")
+                
                 response = requests.post(self.webhook_url, json=payload, timeout=10)
+                
+                # Log response details on error
+                if response.status_code != 200:
+                    logger.error(f"❌ Slack Webhook Error: HTTP {response.status_code}")
+                    logger.error(f"   Response body: {response.text}")
+                    # Print the full payload on error so we can see what failed
+                    logger.error(f"   === FULL PAYLOAD START ===")
+                    logger.error(payload_str[:5000])  # First 5000 chars
+                    logger.error(f"   === FULL PAYLOAD END ===")
+                
                 response.raise_for_status()
                 logger.info(f"✅ Slack notification sent via Webhook")
             else:

@@ -34,15 +34,30 @@ async def test_with_slack():
     if approved_count > 0:
         print(f"🔄 Auto-approved {approved_count} abandoned meeting(s) from previous session\n")
     
-    # 1. Load static transcript
-    print("📂 Loading static transcript...")
-    with open("tests/static_transcript.json", "r") as f:
-        raw_data = json.load(f)
+    # 1. Load Blackbrook transcript
+    print("📂 Loading Blackbrook Case & Team Cube Ads transcript...")
+    with open("tests/Blackbrook-Case-and-Team-Cube-Ads-2bc1edcb-2eeb.json", "r") as f:
+        raw_transcript = json.load(f)
     
+    # Extract unique speakers from transcript
+    speakers = list(set([s["speaker_name"] for s in raw_transcript]))
+    
+    # Build MeetingState from raw transcript format
     initial_state = MeetingState(
-        meeting_id=raw_data["meeting_id"],
-        metadata=MeetingMetadata(**raw_data["metadata"]),
-        transcript=[TranscriptSegment(**t) for t in raw_data["transcript"]]
+        meeting_id="BLACKBROOK_ADS_001",
+        metadata=MeetingMetadata(
+            title="Blackbrook Case and Team Cube Ads",
+            date="2024-12-14",
+            participants=speakers
+        ),
+        transcript=[
+            TranscriptSegment(
+                speaker=s["speaker_name"],
+                text=s["sentence"],
+                start_time=s.get("startTime", "00:00"),
+                end_time=s.get("endTime", "00:00")
+            ) for s in raw_transcript
+        ]
     )
     
     print(f"✅ Loaded: {initial_state.metadata.title}")

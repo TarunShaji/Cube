@@ -312,11 +312,17 @@ async def resume_council_pipeline(thread_id: str, user_feedback: str, slack_user
         
         # Resume from checkpoint with None as input (means "continue from interrupt")
         # This will trigger route_after_human() which routes to refiner
+        # Resume from checkpoint with None as input (means "continue from interrupt")
+        # This will trigger route_after_human() which routes to refiner
         final_state = current_state
+        logger.info(f"🚀 DEBUG: Calling app_graph.astream(None, config)")
+        step_count = 0
         async for event in app_graph.astream(None, config):
+            step_count += 1
             if event:
                 event_nodes = list(event.keys())
-                logger.info(f"📊 RESUME EVENT: {', '.join(event_nodes)}")
+                logger.info(f"📊 RESUME EVENT #{step_count}: {', '.join(event_nodes)}")
+                logger.info(f"   Event Payload Keys: {list(event.values())[0].keys() if len(event.values()) > 0 and isinstance(list(event.values())[0], dict) else 'N/A'}")
                 
                 # Update final_state with each event
                 for node_name, node_output in event.items():
@@ -324,6 +330,9 @@ async def resume_council_pipeline(thread_id: str, user_feedback: str, slack_user
                         for key, value in node_output.items():
                             if hasattr(final_state, key):
                                 setattr(final_state, key, value)
+                                logger.info(f"   Updated state field: {key}")
+        
+        logger.info(f"🏁 DEBUG: Stream finished. Total steps: {step_count}")
         
         logger.info("="*80)
         logger.info("✅ COUNCIL PIPELINE: Resume completed")

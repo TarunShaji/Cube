@@ -31,7 +31,8 @@ class Commitment(BaseModel):
 
 class EmailDraft(BaseModel):
     subject: Optional[str] = None
-    body: Optional[str] = None
+    body: Optional[str] = None                    # Client-facing email ONLY
+    internal_action_plan: Optional[str] = None    # Internal items (grouped by owner)
 
 class ValidationResult(BaseModel):
     is_valid: bool = False

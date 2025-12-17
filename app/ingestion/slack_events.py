@@ -109,6 +109,7 @@ async def process_refinement_event(event: SlackEvent):
         meeting_state = await db.get_pending_meeting()
         
         if not meeting_state:
+            logger.warning(f"⚠️ process_refinement_event: No pending meeting found for user {event.user}")
             reply_to_slack(event.channel, event.user, "I couldn't find any meetings waiting for review. 🤷")
             return
 
@@ -125,6 +126,7 @@ async def process_refinement_event(event: SlackEvent):
             "processed": False
         }
         await db.save_refinement_request(doc)
+        logger.info(f"💾 Saved refinement request to DB")
 
         # 4. Determine Intent
         # Simple heuristic: Check if user approved or requested changes
@@ -148,14 +150,20 @@ async def process_refinement_event(event: SlackEvent):
         # CRITICAL: Use meeting_id as thread_id to load the correct checkpoint
         from app.graph.workflow_council import resume_council_pipeline
         
-        logger.info(f"🔄 Resuming pipeline from checkpoint: {meeting_state.meeting_id}")
-        updated_state = await resume_council_pipeline(
-            thread_id=meeting_state.meeting_id,
-            user_feedback=event.text,
-            slack_user_id=event.user
-        )
+        logger.info(f"🔄 Resuming pipeline for thread: {meeting_state.meeting_id}")
+        try:
+            updated_state = await resume_council_pipeline(
+                thread_id=meeting_state.meeting_id,
+                user_feedback=event.text,
+                slack_user_id=event.user
+            )
+        except Exception as e_resume:
+             logger.error(f"❌ Resume failed with error: {e_resume}", exc_info=True)
+             reply_to_slack(event.channel, event.user, "❌ Error during pipeline resume. Check server logs.")
+             return
         
         if not updated_state:
+            logger.error("❌ Resume returned None (updated_state is None)")
             reply_to_slack(event.channel, event.user, "❌ Failed to resume pipeline. Please try again.")
             return
         

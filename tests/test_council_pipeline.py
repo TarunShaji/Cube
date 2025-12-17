@@ -110,6 +110,13 @@ async def test_council_pipeline():
     print(f"User says: \"{user_feedback}\"")
     print()
     
+    # Save to MongoDB first (resume_council_pipeline loads from MongoDB)
+    from app.services.storage import db
+    final_state.meeting_id = "test_council_001"  # Ensure ID matches thread_id
+    await db.save_meeting(final_state)
+    print("💾 Meeting state saved to MongoDB")
+    print()
+    
     print("🔄 Resuming Council Pipeline with feedback...")
     print("Expected Flow:")
     print("  1️⃣ Refiner applies user feedback")

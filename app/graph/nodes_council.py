@@ -196,10 +196,19 @@ Extract with MAXIMUM specificity. No vague pronouns. No ambiguous tasks.
 
     try:
         logger.info("   Invoking LLM for data extraction...")
+        import time
+        start_time = time.time()
+        
+        # Add timeout to call if possible, or just log start
+        logger.info(f"   ⏳ DEBUG: LLM Request sent at {start_time}")
+        
         response = await llm.with_structured_output(ExtractorOutput).ainvoke([
             SystemMessage(content="You are a precise data extraction system. Facts only, no interpretation."),
             HumanMessage(content=prompt)
         ])
+        
+        duration = time.time() - start_time
+        logger.info(f"   ✅ DEBUG: LLM Response received in {duration:.2f}s")
         
         logger.info("✅ EXTRACTOR AGENT: Extraction complete")
         logger.info(f"   Commitments found: {len(response.commitments)}")
@@ -216,6 +225,7 @@ Extract with MAXIMUM specificity. No vague pronouns. No ambiguous tasks.
     except Exception as e:
         logger.error(f"❌ EXTRACTOR AGENT FAILED: {str(e)}")
         logger.error(f"   Error type: {type(e).__name__}")
+        logger.error(f"   Error details: {e.args}")
         logger.error("="*60)
         raise
 
@@ -422,7 +432,7 @@ Best,
 Sahana
 
 =============================================================
-OUTPUT 1: CLIENT-FACING EMAIL
+OUTPUT 1: CLIENT-FACING EMAIL (put in 'body' field)
 =============================================================
 
 **Audience**: The external client/stakeholder
@@ -443,41 +453,13 @@ OUTPUT 1: CLIENT-FACING EMAIL
 - ❌ Be overly formal - keep it friendly and direct
 
 =============================================================
-OUTPUT 2: INTERNAL ACTION PLAN
+OUTPUT 2: INTERNAL ACTION PLAN (put in 'internal_action_plan' field)
 =============================================================
 
 **Audience**: Internal team (PMs, developers, designers)
 **Tone**: Tactical, direct, detailed
 
-**WHAT TO INCLUDE**:
-1. Key Decisions section (bullet list)
-2. Tasks grouped by Owner name
-3. Technical details and specific instructions
-4. Client tasks to track (what we're waiting on)
-5. Unassigned/TBD items that need owners
-
-=============================================================
-REQUIRED OUTPUT FORMAT (MUST INCLUDE BOTH SECTIONS!)
-=============================================================
-
-**Subject line**: Put in the 'subject' field
-
-**Body**: Must contain BOTH sections separated by the divider:
-
-Hi [Client Name(s)],
-
-Thank you for your time on today's call. Here are the latest updates:
-
-[BULLET LIST OF UPDATES/ITEMS]
-
-[CLIENT ACTION ITEMS IF ANY]
-
-[SHORT CLOSING]
-
----
-=== INTERNAL USE ONLY ===
----
-
+**FORMAT**:
 ### Key Decisions
 * [Decision 1]
 * [Decision 2]
@@ -499,20 +481,25 @@ Thank you for your time on today's call. Here are the latest updates:
 **Unassigned / Needs Owner**
 * [Task without owner]
 
-IMPORTANT: You MUST include BOTH the client email AND the internal action plan!
+=============================================================
+IMPORTANT: Return both sections in their SEPARATE fields!
+- 'subject': Email subject line
+- 'body': Client-facing email ONLY (no internal items)
+- 'internal_action_plan': Internal action plan ONLY
+=============================================================
 """
 
     try:
         logger.info("   Invoking LLM for email composition...")
         response = await llm.with_structured_output(EmailDraft).ainvoke([
-            SystemMessage(content="You are a professional executive assistant. Generate both a client-facing email AND an internal action plan. Keep them clearly separated."),
+            SystemMessage(content="You are a professional executive assistant. Generate a client-facing email in the 'body' field and an internal action plan in the 'internal_action_plan' field. Keep them COMPLETELY SEPARATE - do not include internal items in the body field."),
             HumanMessage(content=prompt)
         ])
         
         logger.info("✅ COPYWRITER AGENT: Email draft complete")
         logger.info(f"   Subject: {response.subject}")
-        logger.info(f"   Body length: {len(response.body)} chars")
-        logger.info(f"   First 100 chars: {response.body[:100]}...")
+        logger.info(f"   Client email length: {len(response.body) if response.body else 0} chars")
+        logger.info(f"   Internal plan length: {len(response.internal_action_plan) if response.internal_action_plan else 0} chars")
         logger.info("="*60)
         return {"email": response}
     except Exception as e:
@@ -547,12 +534,15 @@ async def agent_refiner(state: MeetingState) -> Dict[str, Any]:
     logger.info(f"   Current email subject: {state.email.subject}")
     
     prompt = f"""
-You are refining a draft email based on human feedback.
+You are refining a meeting follow-up based on human feedback.
 
-**CURRENT EMAIL**:
+**CURRENT CLIENT EMAIL** (this goes to the client):
 Subject: {state.email.subject}
 Body:
 {state.email.body}
+
+**CURRENT INTERNAL ACTION PLAN** (for internal team only):
+{state.email.internal_action_plan}
 
 **HUMAN FEEDBACK**:
 {state.human_feedback.instructions}
@@ -562,25 +552,31 @@ Body:
 - Decisions: {state.extractor.decisions}
 
 **INSTRUCTIONS**:
-1. Apply the requested changes
-2. Preserve factual accuracy (don't invent commitments)
-3. If feedback requests adding a task, add it to the action items section
-4. If feedback requests tone change, rewrite accordingly
+1. Determine if the feedback applies to the CLIENT EMAIL, INTERNAL PLAN, or BOTH
+2. Apply the requested changes to the appropriate section(s)
+3. Preserve factual accuracy (don't invent commitments)
+4. If feedback requests adding a task:
+   - Add to internal_action_plan (grouped by owner)
+   - Only add to client email if it's a CLIENT action item
 5. Keep professional formatting
 
-Return the UPDATED email (full subject + body).
+**RETURN**:
+- 'subject': Updated subject (or same if unchanged)
+- 'body': Updated CLIENT email only (no internal items!)
+- 'internal_action_plan': Updated internal action plan
 """
 
     try:
         logger.info("   Invoking LLM for refinement...")
         response = await llm.with_structured_output(EmailDraft).ainvoke([
-            SystemMessage(content="You are an intelligent editor applying human feedback precisely."),
+            SystemMessage(content="You are an intelligent editor. Apply feedback to the correct section - client email in 'body', internal items in 'internal_action_plan'. Keep them SEPARATE."),
             HumanMessage(content=prompt)
         ])
         
         logger.info("✅ REFINER AGENT: Email refinement complete")
         logger.info(f"   Updated subject: {response.subject}")
-        logger.info(f"   Updated body length: {len(response.body)} chars")
+        logger.info(f"   Client email length: {len(response.body) if response.body else 0} chars")
+        logger.info(f"   Internal plan length: {len(response.internal_action_plan) if response.internal_action_plan else 0} chars")
         logger.info(f"   Changes applied based on: {state.human_feedback.instructions[:60]}...")
         logger.info("="*60)
         return {"email": response}

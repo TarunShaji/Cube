@@ -78,55 +78,91 @@ class SlackService:
         if state.email.body:
              blocks.append({"type": "divider"})
              
+             # ===== CLIENT EMAIL SECTION =====
              # Slack section text limit is 3000 chars, use 2900 to be safe
              MAX_SECTION_CHARS = 2900
-             full_text = f"*Draft Email (Subject: {state.email.subject or 'No Subject'})*\n```{state.email.body}```"
              
-             if len(full_text) <= MAX_SECTION_CHARS:
+             # Show client email first
+             client_email_header = f"*📧 Client Email (Subject: {state.email.subject or 'No Subject'})*\n```"
+             client_email_body = state.email.body or ""
+             full_client_text = f"{client_email_header}{client_email_body}```"
+             
+             if len(full_client_text) <= MAX_SECTION_CHARS:
                  blocks.append({
                     "type": "section",
-                    "text": {"type": "mrkdwn", "text": full_text}
+                    "text": {"type": "mrkdwn", "text": full_client_text}
                  })
              else:
                  # Split into multiple sections
-                 # First section with subject header
-                 header_text = f"*Draft Email (Subject: {state.email.subject or 'No Subject'})*\n```"
-                 remaining_chars = MAX_SECTION_CHARS - len(header_text) - 3  # -3 for closing ```
-                 
-                 body_text = state.email.body
-                 first_chunk = body_text[:remaining_chars]
+                 remaining_chars = MAX_SECTION_CHARS - len(client_email_header) - 6  # -6 for ...```
+                 first_chunk = client_email_body[:remaining_chars]
                  blocks.append({
                     "type": "section",
-                    "text": {"type": "mrkdwn", "text": f"{header_text}{first_chunk}...```"}
+                    "text": {"type": "mrkdwn", "text": f"{client_email_header}{first_chunk}...```"}
                  })
                  
                  # Remaining chunks
-                 body_text = body_text[remaining_chars:]
-                 chunk_num = 2
+                 body_text = client_email_body[remaining_chars:]
                  while body_text:
-                     chunk = body_text[:MAX_SECTION_CHARS - 10]  # Leave room for ``` markers
+                     chunk = body_text[:MAX_SECTION_CHARS - 10]
                      body_text = body_text[MAX_SECTION_CHARS - 10:]
                      
-                     if body_text:  # More chunks coming
+                     if body_text:
                          blocks.append({
                             "type": "section",
                             "text": {"type": "mrkdwn", "text": f"```...{chunk}...```"}
                          })
-                     else:  # Last chunk
+                     else:
                          blocks.append({
                             "type": "section",
                             "text": {"type": "mrkdwn", "text": f"```...{chunk}```"}
                          })
-                     chunk_num += 1
+             
+             # ===== INTERNAL ACTION PLAN SECTION =====
+             if state.email.internal_action_plan:
+                 blocks.append({"type": "divider"})
+                 internal_header = "*🔒 INTERNAL USE ONLY*\n"
+                 internal_body = state.email.internal_action_plan
+                 full_internal_text = f"{internal_header}{internal_body}"
+                 
+                 if len(full_internal_text) <= MAX_SECTION_CHARS:
+                     blocks.append({
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": full_internal_text}
+                     })
+                 else:
+                     # Split internal plan into chunks
+                     remaining_chars = MAX_SECTION_CHARS - len(internal_header)
+                     first_chunk = internal_body[:remaining_chars]
+                     blocks.append({
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": f"{internal_header}{first_chunk}..."}
+                     })
+                     
+                     internal_body = internal_body[remaining_chars:]
+                     while internal_body:
+                         chunk = internal_body[:MAX_SECTION_CHARS - 3]
+                         internal_body = internal_body[MAX_SECTION_CHARS - 3:]
+                         
+                         if internal_body:
+                             blocks.append({
+                                "type": "section",
+                                "text": {"type": "mrkdwn", "text": f"...{chunk}..."}
+                             })
+                         else:
+                             blocks.append({
+                                "type": "section",
+                                "text": {"type": "mrkdwn", "text": f"...{chunk}"}
+                             })
 
         blocks.append({"type": "divider"})
         
         # Build Gmail Compose URL with pre-filled draft
+        # IMPORTANT: Only use the CLIENT EMAIL (body), not internal action plan
         import urllib.parse
         gmail_subject = urllib.parse.quote(state.email.subject or "Follow-up", safe="")
         
-        # Truncate body for Gmail URL (Slack button URL limit is 3000 chars)
-        # Reserve ~200 chars for URL structure and subject
+        # Use only the client-facing email for Gmail (not internal_action_plan)
         MAX_BODY_CHARS = 800  # URL-encoded this becomes ~2400 chars
         email_body = state.email.body or ""
         if len(email_body) > MAX_BODY_CHARS:

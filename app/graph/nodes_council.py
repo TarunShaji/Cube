@@ -26,9 +26,29 @@ llm = ChatGoogleGenerativeAI(
 # COUNCIL AGENTS (New Non-Linear Architecture)
 # ============================================================
 
+
 def format_transcript(transcript: List) -> str:
     """Helper to format transcript with line numbers"""
     return "\n".join([f"[{i}] {s.speaker}: {s.text}" for i, s in enumerate(transcript)])
+
+def get_effective_participants(state: MeetingState) -> List[str]:
+    """
+    Returns participants list. Merges unique speakers from the transcript 
+    with any metadata participants to ensure full coverage.
+    """
+    participants = set()
+    
+    # 1. Add metadata participants if available
+    if state.metadata.participants:
+        participants.update(state.metadata.participants)
+        
+    # 2. Add actual speakers from transcript (CRITICAL: Always do this)
+    for segment in state.transcript:
+        if segment.speaker and segment.speaker.strip():
+            participants.add(segment.speaker.strip())
+            
+    return list(participants) if participants else ["Unknown Participants"]
+
 
 
 # --- 1️⃣ STRATEGIST AGENT ---
@@ -68,7 +88,9 @@ Example: If you say "Urgent", cite lines like [3], [7], [12] that support this.
 Metadata:
 - Title: {state.metadata.title}
 - Date: {state.metadata.date}
-- Participants: {', '.join(state.metadata.participants)}
+- Title: {state.metadata.title}
+- Date: {state.metadata.date}
+- Participants: {', '.join(get_effective_participants(state))}
 
 Transcript (with line numbers):
 {transcript_text[:50000]}
@@ -115,83 +137,56 @@ async def agent_extractor(state: MeetingState) -> Dict[str, Any]:
     transcript_text = format_transcript(state.transcript)
     logger.info(f"   Formatted transcript length: {len(transcript_text)} chars")
     
+    participants_list = ", ".join(get_effective_participants(state))
+
     prompt = f"""
 You are a PRECISE data extractor. Extract structured action items from this transcript.
 
-**TEAM ROLES** (use for intelligent assignment):
-- **Sahana K** = Designer (Figma, images, visual elements, UI/UX)
-- **Nithin Reddy** = Developer (code, backend, functionality, uploads, deployment)
-- **Karthik B** = Project Manager (coordination, client communication)
+**MEETING PARTICIPANTS** (Only assign tasks to these people or "Unknown"):
+{participants_list}
 
 =============================================================
-CRITICAL EXTRACTION RULES - FOLLOW EXACTLY
+CRITICAL ANTI-HALLUCINATION RULES
 =============================================================
 
-**1. KILL THE PRONOUNS (Context Resolution):**
-❌ NEVER output vague instructions like "Delete this," "Fix that," or "Remove something"
-✅ ALWAYS look at the 2-3 sentences BEFORE the action in the transcript to find the specific noun
+**1. STRICT OWNER ATTRIBUTION (The "Ghost" Rule):**
+❌ NEVER assign a task to a name that is not listed in **MEETING PARTICIPANTS** or explicitly spoken to/addressed in the transcript.
+❌ Do NOT assume a person is a developer or designer unless they are actually in this meeting.
+✅ You MAY assign a task to a person NOT in the list ONLY IF they are explicitly named/addressed in the transcript (e.g. "Sahana, please do X").
+✅ If a role is mentioned (e.g., "The dev needs to fix this") but no name is attached, use "Developer (TBD)" or "TBD".
+✅ If the speaker says "I will do it", map "I" to the Speaker's Name.
 
-Examples:
-❌ BAD: "Delete something to avoid confusion"
+**2. KILL THE PRONOUNS (Context Resolution):**
+❌ BAD: "Delete this," "Fix that"
 ✅ GOOD: "Delete the duplicate arrow icon on the homepage"
 
-❌ BAD: "Change this to match"
-✅ GOOD: "Change the footer background color to match the header (#2B4A6F)"
-
-❌ BAD: "Hide them from the back end"
-✅ GOOD: "Hide the 'Benefits' and 'Case Study' pages from the navigation menu"
-
-**2. QUALIFY COMMUNICATION TASKS:**
-❌ NEVER just say "Write to [Name]" or "Email [Name]"
-✅ ALWAYS specify WHAT the email/message is about
-
-Examples:
-❌ BAD: "Write to Alex"
-✅ GOOD: "Email Alex to request the shipping address for the product bottles"
-
-❌ BAD: "Contact client"
-✅ GOOD: "Contact client to get GSC access credentials for seo@cubehq.ai"
-
-**3. INTELLIGENT ROLE ASSIGNMENT:**
-If someone says "[Name] do X" but the task doesn't match their role, assign correctly:
-
-- Visual/Design/Figma/Images → Sahana K (Designer)
-- Code/Backend/Functionality/Shopify → Nithin Reddy (Developer)  
-- Coordination/Follow-up/PM tasks → Karthik B (PM)
-
-Example: If transcript says "Nithin change the image" but it's a design task:
-→ Assign to Sahana K with task: "Update product image on homepage"
-→ OR assign to Nithin if it's just uploading: "Upload updated product image to Shopify"
-
-**4. DECISIONS vs ACTION ITEMS - NO OVERLAP:**
-- **Decisions** = High-level strategic choices (e.g., "Launch Phase 1 before Christmas")
-- **Action Items** = Granular executable tasks (e.g., "Hide buttons on page X")
-- DO NOT repeat the same item in both lists!
+**3. DECISIONS vs ACTION ITEMS:**
+- Decisions = Strategy/Direction.
+- Action Items = Executable Tasks.
+- Do not duplicate items.
 
 =============================================================
 WHAT TO EXTRACT
 =============================================================
 
 **1. Action Items (commitments):**
-- Task: SPECIFIC description (use context resolution!)
-- Owner: Assign based on task type (Designer/Developer/PM/Client/TBD)
-- Due: YYYY-MM-DD or relative (e.g., "Friday", "Next week", "TBD")
-- Evidence: The FULL sentence from transcript
+- Task: SPECIFIC description.
+- Owner: Must be a Participant or "TBD".
+- Due: Explicit date or "TBD". 
+- Evidence: The EXACT sentence where the commitment was made.
 
 **2. Quantitative Metrics:**
-- Budget amounts, deadlines, targets, counts
-- Format as dictionary: {{"budget": 10000, "deadline": "2024-01-15"}}
+- {{"budget": 10000, "deadline": "2024-01-15"}}
 
 **3. Key Decisions Made:**
-- HIGH-LEVEL choices only (strategy, priorities, direction)
-- NOT granular tasks
+- High-level choices only.
 
 =============================================================
 TRANSCRIPT
 =============================================================
 {transcript_text[:50000]}
 
-Extract with MAXIMUM specificity. No vague pronouns. No ambiguous tasks.
+Extract with MAXIMUM specificity. Facts only.
 """
 
     try:
@@ -270,6 +265,9 @@ You are The Critic - a validation agent that checks for consistency and accuracy
 - Metrics: {state.extractor.metrics}
 - Decisions: {state.extractor.decisions}
 
+**PARTICIPANT LIST (Hint only)**:
+{', '.join(get_effective_participants(state))}
+
 **YOUR VALIDATION TASKS**:
 
 1. **Strategist Validation**:
@@ -281,6 +279,7 @@ You are The Critic - a validation agent that checks for consistency and accuracy
 
 2. **Extractor Validation**:
    - Are commitments supported by verbatim evidence?
+   - **Transcript is King**: If an owner is NOT in the Participant List but IS addressed in the transcript (e.g. "Hey Bob"), VALIDATE it. Do NOT reject.
    - Are metrics accurate to what was said?
      Example REJECT: Extractor says "Budget: $10k" but transcript says "$100k"
    - Are decisions real or hallucinated?
@@ -381,7 +380,9 @@ You are drafting a professional meeting follow-up with TWO SEPARATE OUTPUTS.
 - Sentiment: {state.strategist.sentiment}
 - Meeting Title: {state.metadata.title}
 - Date: {state.metadata.date}
-- Participants: {', '.join(state.metadata.participants)}
+- Meeting Title: {state.metadata.title}
+- Date: {state.metadata.date}
+- Participants: {', '.join(get_effective_participants(state))}
 
 **RAW DATA** (from Extractor):
 - Decisions Made: {state.extractor.decisions}
@@ -401,7 +402,7 @@ Please review and share feedback or approvals where applicable.
 Thanks!
 
 **Example 2:**
-Hi Wendy, Tina and Gadi,
+Hi [Client Name],
 Thank you for your time on today's call. Sharing the latest updates for your review and approval:
 Title & Meta: View
 Blog Page Preview Links:
@@ -409,7 +410,7 @@ Collection: View
 Individual: View
 Please let us know which variation you'd like to proceed with so we can begin development.
 Thanks,
-Jatin
+[Sender Name]
 
 **Example 3:**
 Hi T and John,
@@ -423,13 +424,13 @@ Thank you for granting access to the Ads account.
 Best,
 
 **Example 4:**
-Hi Nancy, Peggy, and Jeff,
+Hi [Client Name],
 Thank you for your time on the call today. As discussed, I'm sharing the implementation plan we went over - Click here.
 We'll begin working on the schema markup, title and header descriptions, and the blog page.
 Please let us know if you have any questions.
 Looking forward to our call next week!
 Best,
-Sahana
+[Sender Name]
 
 =============================================================
 OUTPUT 1: CLIENT-FACING EMAIL (put in 'body' field)
@@ -446,7 +447,7 @@ OUTPUT 1: CLIENT-FACING EMAIL (put in 'body' field)
 5. Short closing (Thanks! / Best, / Looking forward)
 
 **CRITICAL CONSTRAINTS - DO NOT**:
-- ❌ Mention internal employee names (Nithin, Sahana, Karthik, etc.)
+- ❌ Mention internal employee names in the client email body
 - ❌ List internal technical tasks (backend changes, hide buttons, etc.)
 - ❌ Use "TBD" in the client email
 - ❌ Write long paragraphs - use bullets!
@@ -466,13 +467,13 @@ OUTPUT 2: INTERNAL ACTION PLAN (put in 'internal_action_plan' field)
 
 ### Tasks by Owner
 
-**Nithin Reddy**
+**[Owner Name 1]**
 * [Task] (Due: [Date])
 
-**Sahana K**
+**[Owner Name 2]**
 * [Task] (Due: [Date])
 
-**Karthik B**
+**[Owner Name 3]**
 * [Task] (Due: [Date])
 
 **Client Action Items (to track)**

@@ -1,24 +1,30 @@
 """
 End-to-End Test: Council Pipeline with Slack Integration
-Processes static transcript and sends output to Slack channel.
+Fetches transcript from Fireflies API and sends output to Slack channel.
 """
 
 import asyncio
-import json
+import sys
 import logging
-from app.state import MeetingState, MeetingMetadata, TranscriptSegment
 from app.graph.workflow_council import run_council_pipeline
 from app.services.storage import db
 from app.services.slack import slack_service
+from app.services.fireflies import fireflies_client
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-async def test_with_slack():
+# ============================================================
+# CONFIGURATION: Set your Fireflies Meeting ID here
+# ============================================================
+# You can override this via command line: python tests/test_council_slack.py <MEETING_ID>
+DEFAULT_MEETING_ID = "a4c7e6e4-60e4-4b2a-9f3b-example"  # Replace with your default meeting ID
+
+async def test_with_slack(meeting_id: str):
     """
     Full pipeline test with Slack integration:
-    1. Load static transcript
+    1. Fetch transcript from Fireflies API
     2. Run Council pipeline (will pause at human_review)
     3. Save to MongoDB with status="pending"
     4. Send draft to Slack channel
@@ -34,31 +40,16 @@ async def test_with_slack():
     if approved_count > 0:
         print(f"🔄 Auto-approved {approved_count} abandoned meeting(s) from previous session\n")
     
-    # 1. Load Sahana CubeHQ transcript
-    print("📂 Loading Sahana CubeHQ AI meeting transcript...")
-    with open("tests/sahana-cubehq-ai-Wed-03-Dec-2025-18-32-52-UTC-Untitled-d2b09e65-c470.json", "r") as f:
-        raw_transcript = json.load(f)
+    # 1. Fetch transcript from Fireflies API
+    print(f"🔥 Fetching transcript from Fireflies API...")
+    print(f"   Meeting ID: {meeting_id}")
     
-    # Extract unique speakers from transcript
-    speakers = list(set([s["speaker_name"] for s in raw_transcript]))
-    
-    # Build MeetingState from raw transcript format
-    initial_state = MeetingState(
-        meeting_id="SAHANA_CUBEHQ_001",
-        metadata=MeetingMetadata(
-            title="CubeHQ AI - Website Review Discussion",
-            date="2025-12-03",
-            participants=speakers
-        ),
-        transcript=[
-            TranscriptSegment(
-                speaker=s["speaker_name"],
-                text=s["sentence"],
-                start_time=s.get("startTime", "00:00"),
-                end_time=s.get("endTime", "00:00")
-            ) for s in raw_transcript
-        ]
-    )
+    try:
+        initial_state = fireflies_client.get_transcript(meeting_id)
+    except Exception as e:
+        print(f"\n❌ Failed to fetch transcript from Fireflies API: {e}")
+        print("   Check your FIREFLIES_API_KEY and Meeting ID")
+        return
     
     print(f"✅ Loaded: {initial_state.metadata.title}")
     print(f"   Meeting ID: {initial_state.meeting_id}")
@@ -121,12 +112,21 @@ async def test_with_slack():
         print("⚠️ Pipeline completed without pause (unexpected)\n")
 
 if __name__ == "__main__":
+    # Allow passing meeting ID via command line
+    if len(sys.argv) > 1:
+        meeting_id = sys.argv[1]
+    else:
+        meeting_id = DEFAULT_MEETING_ID
+        print(f"ℹ️  No meeting ID provided. Using default: {meeting_id}")
+        print(f"   Usage: python tests/test_council_slack.py <MEETING_ID>\n")
+    
     print("\n")
     print("╔" + "═"*78 + "╗")
     print("║" + " "*15 + "END-TO-END COUNCIL PIPELINE TEST" + " "*31 + "║")
     print("╚" + "═"*78 + "╝")
     print("\n")
     
-    asyncio.run(test_with_slack())
+    asyncio.run(test_with_slack(meeting_id))
     
     print("\n🏛️ Test Complete! Check Slack and start the server.\n")
+
